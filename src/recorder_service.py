@@ -18,13 +18,13 @@ from ruamel.yaml import YAML
 @dataclasses.dataclass(kw_only=True)
 class RecorderService:
     # service configuration variables
-    config_path: os.PathLike = pathlib.Path("config")
+    config_path: os.PathLike = "config"
     name: str = "recorder"
-    output_path: os.PathLike = pathlib.Path("/data/ringbuffer")
-    ram_ringbuffer_path: os.PathLike = pathlib.Path(".")
-    script_path: os.PathLike = pathlib.Path("recorder.py")
+    output_path: os.PathLike = "/data/ringbuffer"
+    ram_ringbuffer_path: os.PathLike = "."
+    script_path: os.PathLike = "recorder.py"
     start_config: str = "default"
-    tmp_ringbuffer_path: os.PathLike = pathlib.Path("/data/tmp-ringbuffer")
+    tmp_ringbuffer_path: os.PathLike = "/data/tmp-ringbuffer"
     # service state variables
     config: dict[str, Any] = dataclasses.field(default_factory=dict, init=False)
     loadable_configs: dict[str, dict[str, Any]] = dataclasses.field(
@@ -35,6 +35,13 @@ class RecorderService:
     recording_scope: Optional[anyio.CancelScope] = dataclasses.field(
         default=None, init=False
     )
+
+    def __post_init__(self):
+        self.config_path = pathlib.Path(self.config_path)
+        self.output_path = pathlib.Path(self.output_path)
+        self.ram_ringbuffer_path = pathlib.Path(self.ram_ringbuffer_path)
+        self.script_path = pathlib.Path(self.script_path)
+        self.tmp_ringbuffer_path = pathlib.Path(self.tmp_ringbuffer_path)
 
 
 def load_configs(service):
@@ -242,8 +249,7 @@ async def process_commands(client, service, task_group):
             await process_config_command(client, service, payload)
 
 
-async def main(kwargs_dict):
-    service = RecorderService(**kwargs_dict)
+async def main(service):
     load_configs(service)
     will = aiomqtt.Will(
         f"{service.name}/status",
@@ -284,8 +290,7 @@ async def main(kwargs_dict):
 
 
 if __name__ == "__main__":
-    parser = jsonargparse.auto_parser(
+    service = jsonargparse.auto_cli(
         RecorderService, env_prefix="RECORDER", default_env=True
     )
-    cfg = parser.parse_args()
-    anyio.run(main, cfg.as_dict())
+    anyio.run(main, service)
