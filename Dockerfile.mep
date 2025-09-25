@@ -42,9 +42,12 @@ ENV HOLOSCAN_EXECUTOR_LOG_LEVEL=WARN
 ENV HOLOSCAN_LOG_LEVEL=INFO
 ENV HOLOSCAN_LOG_FORMAT=DEFAULT
 
-ENV DRF_RECORDING_DIR=/data/ringbuffer
-ENV DRF_TMP_RINGBUFFER_DIR=/data/tmp-ringbuffer
-ENV RECORDER_DEFAULT_CONFIG=sr1MHz
+ENV RECORDER_CONFIG_PATH=/config
+ENV RECORDER_OUTPUT_PATH=/data/ringbuffer
+ENV RECORDER_RAM_RINGBUFFER_PATH=/ramdisk
+ENV RECORDER_SCRIPT_PATH=/app/mep_recorder.py
+ENV RECORDER_START_CONFIG=sr1MHz
+ENV RECORDER_TMP_RINGBUFFER_PATH=/data/tmp-ringbuffer
 
 #
 # Typical use would involve mounting a volume to /app containing
@@ -58,13 +61,4 @@ COPY --chmod=777 mep/configs /config
 
 ENV HOME=/ramdisk
 WORKDIR /ramdisk
-ENTRYPOINT [ \
-    "python3", \
-    "/app/recorder_service.py", \
-    "--config_path=/config", \
-    "--output_path=${DRF_RECORDING_DIR}", \
-    "--ram_ringbuffer_path=/ramdisk", \
-    "--script_path=/app/mep_recorder.py", \
-    "--start_config=${RECORDER_DEFAULT_CONFIG}", \
-    "--tmp_ringbuffer_path=${DRF_TMP_RINGBUFFER_DIR}" \
-]
+ENTRYPOINT ["python3", "/app/recorder_service.py"]
