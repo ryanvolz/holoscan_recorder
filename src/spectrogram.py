@@ -34,6 +34,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 from holohub import rf_array
+from jsonargparse.typing import PositiveInt
 
 mpl.use("agg")
 
@@ -65,13 +66,17 @@ def timestamp_floor(nsamples, sample_rate_frac):
 class SpectrogramParams:
     """Spectrogram parameters"""
 
+    chunk_size: typing.Optional[PositiveInt] = None
+    """Number of samples in an RFArray chunk of data"""
+    num_subchannels: typing.Optional[PositiveInt] = None
+    """Number of subchannels contained in the RFArray data"""
     window: str = "hann"
     """Window function to apply before taking FFT"""
-    nperseg: int = 1024
+    nperseg: PositiveInt = 1024
     """Length of each segment of samples on which to calculate a spectrum"""
-    noverlap: typing.Optional[int] = None
+    noverlap: typing.Optional[PositiveInt] = None
     """Number of samples to overlap between segments. If None, `noverlap = nperseg // 2`"""
-    nfft: typing.Optional[int] = None
+    nfft: typing.Optional[PositiveInt] = None
     """Length of FFT used per segment. If None, `nfft = nperseg`"""
     detrend: typing.Union[
         typing.Literal["linear"], typing.Literal["constant"], typing.Literal[False]
@@ -81,7 +86,7 @@ class SpectrogramParams:
         typing.Literal["max"], typing.Literal["median"], typing.Literal["mean"]
     ] = "max"
     """Operation to use to reduce segment spectra to one result per chunk. ["max", "median", or "mean"]"""
-    num_spectra_per_chunk: int = 1
+    num_spectra_per_chunk: PositiveInt = 1
     """Number of spectra samples to calculate per chunk of data. Must evenly divide `chunk_size`."""
 
 
@@ -285,19 +290,25 @@ class Spectrogram(holoscan.core.Operator):
 class SpectrogramOutputParams:
     """Spectrogram output parameters"""
 
+    nfft: typing.Optional[PositiveInt] = None
+    """Number of frequency samples in the spectrogram"""
+    spec_sample_cadence: typing.Optional[PositiveInt] = None
+    """Number of RF samples that go into each spectrum input chunk"""
+    num_subchannels: typing.Optional[PositiveInt] = None
+    """Number of subchannels contained in the spectrogram data"""
     output_path: os.PathLike = pathlib.Path(".")
     """Parent directory for writing output files"""
     data_subdir: str = "channel"
     """Subdirectory of `output_path` for writing spectrogram data"""
     plot_subdir: str = "spectrograms"
     """Directory for writing spectrogram plots"""
-    num_spectra_per_output: int = 1200
+    num_spectra_per_output: PositiveInt = 1200
     """Number of spectra to combine in a single output, either a data sample or plot"""
     figsize: tuple[float, float] = (6.4, 4.8)
     """Figure size in inches given as a tuple of (width, height)"""
-    dpi: int = 150
+    dpi: PositiveInt = 150
     """Figure dots per inch"""
-    col_wrap: int = 1
+    col_wrap: PositiveInt = 1
     """Number of columns of spectrograms to use in the figure, wrapping to new rows"""
     cmap: str = "viridis"
     """Colormap"""

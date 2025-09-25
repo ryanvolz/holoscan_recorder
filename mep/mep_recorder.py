@@ -339,6 +339,15 @@ class App(holoscan.core.Application):
                 # )
                 self.add_flow(last_op, spectrogram)
 
+                spec_out_kwargs = self.kwargs("spectrogram_output")
+                spec_out_kwargs.update(
+                    nfft=spectrogram.nfft,
+                    spec_sample_cadence=spectrogram.spec_sample_cadence,
+                    num_subchannels=spectrogram.num_subchannels,
+                    data_subdir=(
+                        f"{self.kwargs('drf_sink')['channel_dir']}_spectrogram"
+                    ),
+                )
                 spectrogram_output = SpectrogramOutput(
                     self,
                     ## CudaStreamCondition doesn't work with a message queue size
@@ -354,13 +363,7 @@ class App(holoscan.core.Application):
                     # # no downstream condition, and we don't want one
                     cuda_stream_pool,
                     name="spectrogram_output",
-                    data_subdir=(
-                        f"{self.kwargs('drf_sink')['channel_dir']}_spectrogram"
-                    ),
-                    nfft=spectrogram.nfft,
-                    spec_sample_cadence=spectrogram.spec_sample_cadence,
-                    num_subchannels=spectrogram.num_subchannels,
-                    **self.kwargs("spectrogram_output"),
+                    **spec_out_kwargs,
                 )
                 self.add_flow(spectrogram, spectrogram_output)
 
