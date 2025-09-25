@@ -411,6 +411,7 @@ class App(holoscan.core.Application):
                 dmd_sink = DigitalMetadataSink(
                     self,
                     name="dmd_sink",
+                    output_path=self.kwargs("drf_sink")["output_path"],
                     metadata_dir=f"{self.kwargs('drf_sink')['channel_dir']}/metadata",
                     subdir_cadence_secs=self.kwargs("drf_sink")["subdir_cadence_secs"],
                     file_cadence_secs=self.kwargs("drf_sink")["file_cadence_millisecs"]
