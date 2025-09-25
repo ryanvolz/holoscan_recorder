@@ -242,8 +242,8 @@ async def process_commands(client, service, task_group):
             await process_config_command(client, service, payload)
 
 
-async def main(**kwargs):
-    service = RecorderService(**kwargs)
+async def main(kwargs_dict):
+    service = RecorderService(**kwargs_dict)
     load_configs(service)
     will = aiomqtt.Will(
         f"{service.name}/status",
