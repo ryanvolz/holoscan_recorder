@@ -12,7 +12,7 @@ import aiomqtt
 import anyio
 import exceptiongroup
 import jsonargparse
-from ruyaml import YAML
+from ruamel.yaml import YAML
 
 
 @dataclasses.dataclass(kw_only=True)
