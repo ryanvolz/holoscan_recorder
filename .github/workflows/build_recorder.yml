@@ -24,8 +24,8 @@ jobs:
         include:
           - dockerfile: Dockerfile.mep
             image_name: ${{ github.repository }}/mep
-        #   - dockerfile: Dockerfile.vsword
-        #     image_name: ${{ github.repository }}/vsword
+          - dockerfile: Dockerfile.vsword
+            image_name: ${{ github.repository }}/vsword
     permissions:
       contents: read
       packages: write
