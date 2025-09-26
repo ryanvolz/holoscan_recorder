@@ -16,15 +16,17 @@ env:
 
 jobs:
   build_docker_image:
-    name: "Build recorder docker image"
+    name: "Build: ${{ matrix.name }}"
     runs-on: ubuntu-22.04-arm
     strategy:
       fail-fast: false
       matrix:
         include:
-          - dockerfile: Dockerfile.mep
+          - name: MEP
+            dockerfile: Dockerfile.mep
             image_name: ${{ github.repository }}/mep
-          - dockerfile: Dockerfile.vsword
+          - name: VSWORD
+            dockerfile: Dockerfile.vsword
             image_name: ${{ github.repository }}/vsword
     permissions:
       contents: read
