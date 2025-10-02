@@ -36,7 +36,7 @@ pipeline:
 
 packet_common: &common_packet_config
   interface_name: rx_port
-  use_hds: true
+  use_header_data_split: true
   gpu_direct: true
   batch_size: &batch_size 625 # Number of packets to process at once into tensor data
   batch_capacity: 5 # Number of batches that can be queued and processed at once
@@ -128,37 +128,39 @@ advanced_network:
                 udp_src: 60000
                 udp_dst: 60001
 
-# Zephyr processing
+# EMVSIS processing
 
 packet0:
   <<: *common_packet_config
-  queue_id: 1
+  queue_id: 0
 
 selector0:
   subchannel_idx: [0, 1, 2, 3, 4, 5]
 
 rotator0:
-  cycle_duration_secs: 1
+  cycle_duration_secs: 10
   cycle_start_timestamp: 0
   schedule:
     - start: 0
-      freq: 31.65e+6
+      freq: 4.6e+6
+    - start: 5
+      freq: 4.65e+6
 
 resampler0:
   up: 1
-  down: 2
+  down: 20
   outrate_cutoff: 1.0
   outrate_transition_width: 0.2
   attenuation_db: 98.35
 
 drf_sink0:
-  channel_dir: simone/vs
+  channel_dir: emvsis/vs
 
 metadata0:
   receiver:
-    description: "VSWORD recorder - SIMONe"
+    description: "VSWORD recorder - EMVSIS"
   processing:
-    decimation: 2
+    decimation: 20
     interpolation: 1
 
 spectrogram0:
@@ -180,41 +182,39 @@ spectrogram_output0:
   cmap: viridis
   snr_db_min: -5
   snr_db_max: 20
-  plot_subdir: spectrograms/simone
+  plot_subdir: spectrograms/emvsis
 
-# EMVSIS processing
+  # Zephyr processing
 
 packet1:
   <<: *common_packet_config
-  queue_id: 0
+  queue_id: 1
 
 selector1:
   subchannel_idx: [0, 1, 2, 3, 4, 5]
 
 rotator1:
-  cycle_duration_secs: 10
+  cycle_duration_secs: 1
   cycle_start_timestamp: 0
   schedule:
     - start: 0
-      freq: 4.6e+6
-    - start: 5
-      freq: 4.65e+6
+      freq: 31.65e+6
 
 resampler1:
   up: 1
-  down: 20
+  down: 2
   outrate_cutoff: 1.0
   outrate_transition_width: 0.2
   attenuation_db: 98.35
 
 drf_sink1:
-  channel_dir: emvsis/vs
+  channel_dir: zephyr/vs
 
 metadata1:
   receiver:
-    description: "VSWORD recorder - EMVSIS"
+    description: "VSWORD recorder - Zephyr"
   processing:
-    decimation: 20
+    decimation: 2
     interpolation: 1
 
 spectrogram1:
@@ -236,4 +236,4 @@ spectrogram_output1:
   cmap: viridis
   snr_db_min: -5
   snr_db_max: 20
-  plot_subdir: spectrograms/emvsis
+  plot_subdir: spectrograms/zephyr

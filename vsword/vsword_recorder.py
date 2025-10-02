@@ -31,7 +31,7 @@ from holohub import advanced_network_common, rf_array
 from holohub.rf_array.digital_metadata import DigitalMetadataSink
 from holohub.rf_array.params import (
     DigitalRFSinkParams,
-    NetConnectorBasicParams,
+    NetConnectorAdvancedParams,
     ResamplePolyParams,
     RotatorScheduledParams,
     SubchannelSelectParams,
@@ -80,7 +80,7 @@ jsonargparse.set_parsing_settings(docstring_parse_attribute_docstrings=True)
 class SchedulerParams:
     """Event-based scheduler parameters"""
 
-    worker_thread_number: PositiveInt = 8
+    worker_thread_number: PositiveInt = 16
     """Number of worker threads"""
     stop_on_deadlock: bool = True
     """Whether the application will terminate if a deadlock occurs"""
@@ -92,25 +92,33 @@ class SchedulerParams:
 class PipelineParams:
     """Pipeline configuration parameters"""
 
-    selector: bool = False
+    selector0: bool = True
     "Enable / disable subchannel selector"
-    converter: bool = True
+    converter0: bool = True
     "Enable / disable complex int to float converter"
-    rotator: bool = False
+    rotator0: bool = True
     "Enable / disable frequency rotator"
     resampler0: bool = True
     "Enable / disable the first stage resampler"
-    resampler1: bool = False
-    "Enable / disable the second stage resampler"
-    resampler2: bool = True
-    "Enable / disable the third stage resampler"
-    int_converter: bool = True
-    "Enable / disable complex float to int converter"
-    digital_rf: bool = True
+    digital_rf0: bool = True
     "Enable / disable writing output to Digital RF"
-    metadata: bool = True
+    metadata0: bool = True
     "Enable / disable writing inherent and user-supplied Digital RF metadata"
-    spectrogram: bool = True
+    spectrogram0: bool = True
+    "Enable / disable spectrogram processing and output"
+    selector1: bool = True
+    "Enable / disable subchannel selector"
+    converter1: bool = True
+    "Enable / disable complex int to float converter"
+    rotator1: bool = True
+    "Enable / disable frequency rotator"
+    resampler1: bool = True
+    "Enable / disable the first stage resampler"
+    digital_rf1: bool = True
+    "Enable / disable writing output to Digital RF"
+    metadata1: bool = True
+    "Enable / disable writing inherent and user-supplied Digital RF metadata"
+    spectrogram1: bool = True
     "Enable / disable spectrogram processing and output"
 
 
@@ -120,13 +128,13 @@ class BasicNetworkOperatorParams:
 
     ip_addr: str = "0.0.0.0"
     """IP address to bind to"""
-    dst_port: NonNegativeInt = 60133
+    dst_port: NonNegativeInt = 60000
     "UDP or TCP port to listen on"
     l4_proto: str = "udp"
     "Layer 4 protocol (udp or tcp)"
-    batch_size: PositiveInt = 6250
+    batch_size: PositiveInt = 625
     "Number of packets in batch"
-    max_payload_size: PositiveInt = 8256
+    max_payload_size: PositiveInt = 4160
     "Maximum payload size expected from sender"
 
 
@@ -140,7 +148,7 @@ class AdvancedNetworkOperatorParams:
 def build_config_parser():
     parser = jsonargparse.ArgumentParser(
         prog="vsword_recorder",
-        description="Process and record RF data for the SpectrumX Mobile Experiment Platform (MEP)",
+        description="Process and record RF data for the VSWORD receiver",
         default_env=True,
     )
     parser.add_argument("--config", action="config")
@@ -149,53 +157,109 @@ def build_config_parser():
     parser.add_argument("--basic_network", type=BasicNetworkOperatorParams)
     parser.add_argument("--advanced_network", type=AdvancedNetworkOperatorParams)
     parser.add_argument(
-        "--packet",
-        type=NetConnectorBasicParams,
-        default=NetConnectorBasicParams(spoof_header=True),
+        "--packet_common",
+        type=NetConnectorAdvancedParams,
     )
-    parser.add_argument("--selector", type=SubchannelSelectParams)
-    parser.add_argument("--rotator", type=RotatorScheduledParams)
+    parser.add_argument(
+        "--packet0",
+        type=NetConnectorAdvancedParams,
+        default=NetConnectorAdvancedParams(
+            max_packet_size=4160,
+            num_subchannels=8,
+            freq_idx_scaling=2000000,
+            freq_idx_offset=3000000,
+            queue_id=0,
+        ),
+    )
+    parser.add_argument(
+        "--packet1",
+        type=NetConnectorAdvancedParams,
+        default=NetConnectorAdvancedParams(
+            max_packet_size=4160,
+            num_subchannels=8,
+            freq_idx_scaling=2000000,
+            freq_idx_offset=3000000,
+            queue_id=1,
+        ),
+    )
+    parser.add_argument(
+        "--selector0",
+        type=SubchannelSelectParams,
+        default=SubchannelSelectParams(subchannel_idx=[0, 1, 2, 3, 4, 5]),
+    )
+    parser.add_argument(
+        "--selector1",
+        type=SubchannelSelectParams,
+        default=SubchannelSelectParams(subchannel_idx=[0, 1, 2, 3, 4, 5]),
+    )
+    parser.add_argument("--rotator0", type=RotatorScheduledParams)
+    parser.add_argument(
+        "--rotator1",
+        type=RotatorScheduledParams,
+        default=RotatorScheduledParams(
+            cycle_duration_secs=1,
+            cycle_start_timestamp=0,
+            schedule=[{"start": 0, "freq": 31.65e6}],
+        ),
+    )
     parser.add_argument(
         "--resampler0",
         type=ResamplePolyParams,
         default=ResamplePolyParams(
             up=1,
-            down=8,
+            down=20,
             outrate_cutoff=1.0,
-            # transition_width: 2 * (cutoff - 1 / remaining_dec)
-            #                   2 * (1.0 - 1 / 8) = 1.75
-            outrate_transition_width=1.75,
-            attenuation_db=105,
+            outrate_transition_width=0.2,
+            attenuation_db=98.35,
         ),
     )
     parser.add_argument(
         "--resampler1",
         type=ResamplePolyParams,
         default=ResamplePolyParams(
-            up=5,
-            down=16,
-            outrate_cutoff=1.0,
-            outrate_transition_width=0.2,
-            attenuation_db=99.65,
-        ),
-    )
-    parser.add_argument(
-        "--resampler2",
-        type=ResamplePolyParams,
-        default=ResamplePolyParams(
             up=1,
-            down=8,
+            down=2,
             outrate_cutoff=1.0,
             outrate_transition_width=0.2,
-            attenuation_db=99.475,
+            attenuation_db=98.35,
         ),
     )
-    parser.add_argument("--drf_sink", type=DigitalRFSinkParams)
     parser.add_argument(
-        "--metadata", type=typing.Optional[dict[str, typing.Any]], default=None
+        "--drf_sink0",
+        type=DigitalRFSinkParams,
+        default=DigitalRFSinkParams(channel_dir="emvsis/vs"),
     )
-    parser.add_argument("--spectrogram", type=SpectrogramParams)
-    parser.add_argument("--spectrogram_output", type=SpectrogramOutputParams)
+    parser.add_argument(
+        "--drf_sink1",
+        type=DigitalRFSinkParams,
+        default=DigitalRFSinkParams(channel_dir="zephyr/vs"),
+    )
+    parser.add_argument(
+        "--metadata0", type=typing.Optional[dict[str, typing.Any]], default=None
+    )
+    parser.add_argument(
+        "--metadata1", type=typing.Optional[dict[str, typing.Any]], default=None
+    )
+    parser.add_argument(
+        "--spectrogram0",
+        type=SpectrogramParams,
+        default=SpectrogramParams(nperseg=1000),
+    )
+    parser.add_argument(
+        "--spectrogram1",
+        type=SpectrogramParams,
+        default=SpectrogramParams(nperseg=1000),
+    )
+    parser.add_argument(
+        "--spectrogram_output0",
+        type=SpectrogramOutputParams,
+        default=SpectrogramOutputParams(plot_subdir="spectrograms/emvsis"),
+    )
+    parser.add_argument(
+        "--spectrogram_output1",
+        type=SpectrogramOutputParams,
+        default=SpectrogramOutputParams(plot_subdir="spectrograms/zephyr"),
+    )
 
     return parser
 

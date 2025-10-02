@@ -302,19 +302,19 @@ class SpectrogramOutputParams:
     """Subdirectory of `output_path` for writing spectrogram data"""
     plot_subdir: str = "spectrograms"
     """Directory for writing spectrogram plots"""
-    num_spectra_per_output: PositiveInt = 1200
+    num_spectra_per_output: PositiveInt = 600
     """Number of spectra to combine in a single output, either a data sample or plot"""
     figsize: tuple[float, float] = (6.4, 4.8)
     """Figure size in inches given as a tuple of (width, height)"""
-    dpi: PositiveInt = 150
+    dpi: PositiveInt = 200
     """Figure dots per inch"""
     col_wrap: PositiveInt = 1
     """Number of columns of spectrograms to use in the figure, wrapping to new rows"""
     cmap: str = "viridis"
     """Colormap"""
-    snr_db_min: float = -10
+    snr_db_min: float = -5
     """Spectrogram color scale minimum, given as SNR in decibels"""
-    snr_db_max: float = 40
+    snr_db_max: float = 20
     """Spectrogram color scale maximum, given as SNR in decibels"""
 
 
