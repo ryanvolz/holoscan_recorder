@@ -611,6 +611,14 @@ class App(holoscan.core.Application):
                 )
                 self.add_flow(last_op, dmd_sink1)
 
+    def cleanup(self):
+        # This is not a Holoscan method!
+        # We use it to contain code for shutting down the advanced network operator
+        try:
+            advanced_network_common.shutdown()
+        except Exception:
+            self.logger.exception("Exception during shutdown!")
+
 
 def main():
     parser = build_config_parser()
@@ -635,6 +643,7 @@ def main():
         )
 
     app = App([sys.executable, sys.argv[0]])
+    app.logger = logger
     app.config(str(config_path))
 
     scheduler = holoscan.schedulers.EventBasedScheduler(
@@ -655,6 +664,7 @@ def main():
         app.run()
     except KeyboardInterrupt:
         # catch keyboard interrupt and simply exit
+        app.cleanup()
         logger.info("Done")
         sys.stdout.flush()
         # Holoscan graph execution framework handles all cleanup
@@ -662,10 +672,14 @@ def main():
         # (which would result in a segfault from double free)
         os._exit(0)
     except SystemExit as e:
+        # nothing cleans up the advanced network operator, so we do it here
+        app.cleanup()
         # Holoscan graph execution framework handles all cleanup
         # so we just need to exit immediately without further Python cleanup
         # (which would result in a segfault from double free)
         os._exit(e.code)
+    else:
+        app.cleanup()
 
 
 if __name__ == "__main__":
