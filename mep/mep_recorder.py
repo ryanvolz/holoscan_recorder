@@ -453,7 +453,16 @@ def main():
     # the configuration to a file in the temporary directory and feed it that
     config_path = pathlib.Path(tempfile.gettempdir()) / "recorder_config.yaml"
     logger.debug(f"Writing temporary config file to {config_path}")
-    parser.save(cfg, config_path, format="yaml", overwrite=True)
+    with config_path.open("w") as f:
+        f.write(
+            parser.dump(
+                cfg,
+                format="yaml",
+                skip_none=True,
+                skip_default=False,
+                skip_link_targets=False,
+            )
+        )
 
     app = App([sys.executable, sys.argv[0]])
     app.config(str(config_path))
