@@ -143,7 +143,9 @@ def build_config_parser():
         description="Process and record RF data for the SpectrumX Mobile Experiment Platform (MEP)",
         default_env=True,
     )
+    # special config argument to load from yaml file
     parser.add_argument("--config", action="config")
+    # operator arguments
     parser.add_argument("--scheduler", type=SchedulerParams)
     parser.add_argument("--pipeline", type=PipelineParams)
     parser.add_argument("--basic_network", type=BasicNetworkOperatorParams)
@@ -196,6 +198,18 @@ def build_config_parser():
     )
     parser.add_argument("--spectrogram", type=SpectrogramParams)
     parser.add_argument("--spectrogram_output", type=SpectrogramOutputParams)
+
+    # non-operator arguments that we use from recorder_service
+    parser.add_argument(
+        "--ram_ringbuffer_path", type=typing.Optional(os.PathLike), default="."
+    )
+    parser.link_arguments(
+        "ram_ringbuffer_path", "drf_sink.output_path", apply_on="parse"
+    )
+    parser.add_argument("--output_path", type=typing.Optional(os.PathLike), default=".")
+    parser.link_arguments(
+        "output_path", "spectrogram_output.output_path", apply_on="parse"
+    )
 
     return parser
 

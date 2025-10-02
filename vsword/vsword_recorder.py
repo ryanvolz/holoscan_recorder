@@ -151,7 +151,9 @@ def build_config_parser():
         description="Process and record RF data for the VSWORD receiver",
         default_env=True,
     )
+    # special config argument to load from yaml file
     parser.add_argument("--config", action="config")
+    # operator arguments
     parser.add_argument("--scheduler", type=SchedulerParams)
     parser.add_argument("--pipeline", type=PipelineParams)
     parser.add_argument("--basic_network", type=BasicNetworkOperatorParams)
@@ -259,6 +261,24 @@ def build_config_parser():
         "--spectrogram_output1",
         type=SpectrogramOutputParams,
         default=SpectrogramOutputParams(plot_subdir="spectrograms/zephyr"),
+    )
+
+    # non-operator arguments that we use from recorder_service
+    parser.add_argument(
+        "--ram_ringbuffer_path", type=typing.Optional[os.PathLike], default="."
+    )
+    parser.link_arguments(
+        "ram_ringbuffer_path", "drf_sink0.output_path", apply_on="parse"
+    )
+    parser.link_arguments(
+        "ram_ringbuffer_path", "drf_sink1.output_path", apply_on="parse"
+    )
+    parser.add_argument("--output_path", type=typing.Optional[os.PathLike], default=".")
+    parser.link_arguments(
+        "output_path", "spectrogram_output0.output_path", apply_on="parse"
+    )
+    parser.link_arguments(
+        "output_path", "spectrogram_output1.output_path", apply_on="parse"
     )
 
     return parser
@@ -603,7 +623,7 @@ def main():
     # the configuration to a file in the temporary directory and feed it that
     config_path = pathlib.Path(tempfile.gettempdir()) / "recorder_config.yaml"
     logger.debug(f"Writing temporary config file to {config_path}")
-    parser.save(cfg, config_path, format="yaml", overwrite=True)
+    parser.save(cfg, config_path, format="yaml", skip_none=True, overwrite=True)
 
     app = App([sys.executable, sys.argv[0]])
     app.config(str(config_path))

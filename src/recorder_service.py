@@ -146,9 +146,9 @@ async def run_recorder(client, service):
         str(service.script_path),
         "--config",
         json.dumps(service.config.as_dict()),
-        "--drf_sink.output_path",
+        "--ram_ringbuffer_path",
         str(service.ram_ringbuffer_path),
-        "--spectrogram_output.output_path",
+        "--output_path",
         str(service.output_path),
     ]
     with anyio.CancelScope() as scope:
