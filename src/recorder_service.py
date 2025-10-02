@@ -163,8 +163,15 @@ async def run_recorder(client, service):
                 if process.returncode is None:
                     # process is still running, stop it gracefully
                     process.send_signal(signal.SIGINT)
-                channel_dir = pathlib.Path(service.config["drf_sink.channel_dir"])
-                shutil.rmtree(channel_dir, ignore_errors=True)
+                # clean up ram ringbuffer directory
+                for item in service.ram_ringbuffer_path.rglob("*"):
+                    try:
+                        if item.is_dir():
+                            shutil.rmtree(item, ignore_errors=True)
+                        else:
+                            item.unlink(missing_ok=True)
+                    except OSError:
+                        pass
                 service.recording_enabled = False
                 service.recording_scope = None
                 with anyio.CancelScope(shield=True):
