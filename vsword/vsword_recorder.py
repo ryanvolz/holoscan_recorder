@@ -139,7 +139,7 @@ class AdvancedNetworkOperatorParams:
 
 def build_config_parser():
     parser = jsonargparse.ArgumentParser(
-        prog="sdr_mep_recorder",
+        prog="vsword_recorder",
         description="Process and record RF data for the SpectrumX Mobile Experiment Platform (MEP)",
         default_env=True,
     )
@@ -532,12 +532,12 @@ def main():
     parser = build_config_parser()
     cfg = parser.parse_args()
 
-    logger = logging.getLogger("holoscan.sdr_mep_recorder")
+    logger = logging.getLogger("holoscan.vsword_recorder")
 
     # We have a parsed configuration (using jsonargparse), but the holoscan app wants
     # to read all of its configuration parameters from a YAML file, so we write out
     # the configuration to a file in the temporary directory and feed it that
-    config_path = pathlib.Path(tempfile.gettempdir()) / "sdr_mep_recorder_config.yaml"
+    config_path = pathlib.Path(tempfile.gettempdir()) / "recorder_config.yaml"
     logger.debug(f"Writing temporary config file to {config_path}")
     parser.save(cfg, config_path, format="yaml", overwrite=True)
 
