@@ -36,6 +36,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python3 -m pip install --no-cache-dir aiomqtt anyio digital-rf exceptiongroup jsonargparse[ruamel,signatures] matplotlib
 
 #
+# Set capabilities on python binary needed by DPDK used by the recorder script
+#
+# (https://doc.dpdk.org/guides-24.11/platform/mlx5.html, running as non-root)
+RUN setcap cap_net_raw,cap_net_admin,cap_sys_rawio+ep $(realpath $(which python3))
+
+#
 # Set up environment variables
 #
 ENV HOLOSCAN_EXECUTOR_LOG_LEVEL=WARN
