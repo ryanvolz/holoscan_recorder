@@ -92,7 +92,7 @@ advanced_network:
         buf_size: *max_packet_size
     interfaces:
       - name: rx_port
-        address: 0005:01:00.0
+        address: "0005:01:00.0"
         rx:
           flow_isolation: true
           queues:
