@@ -23,11 +23,11 @@ jobs:
       matrix:
         include:
           - name: MEP
-            dockerfile: Dockerfile.mep
             image_name: ${{ github.repository }}/mep
+            target: mep
           - name: VSWORD
-            dockerfile: Dockerfile.vsword
             image_name: ${{ github.repository }}/vsword
+            target: vsword
     permissions:
       contents: read
       packages: write
@@ -59,7 +59,8 @@ jobs:
         id: push
         uses: docker/build-push-action@v6
         with:
-          file: ${{ matrix.dockerfile }}
+          file: Dockerfile
+          target: ${{ matrix.target }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
