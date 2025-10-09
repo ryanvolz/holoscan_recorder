@@ -451,7 +451,8 @@ def main():
     # We have a parsed configuration (using jsonargparse), but the holoscan app wants
     # to read all of its configuration parameters from a YAML file, so we write out
     # the configuration to a file in the temporary directory and feed it that
-    config_path = pathlib.Path(tempfile.gettempdir()) / "recorder_config.yaml"
+    tmp_config_dir = tempfile.TemporaryDirectory(prefix=os.path.basename(__file__))
+    config_path = pathlib.Path(tmp_config_dir.name) / "recorder_config.yaml"
     logger.debug(f"Writing temporary config file to {config_path}")
     with config_path.open("w") as f:
         f.write(
@@ -477,6 +478,7 @@ def main():
     def sigterm_handler(signal, frame):
         logger.info("Received SIGTERM, cleaning up")
         sys.stdout.flush()
+        tmp_config_dir.cleanup()
         sys.exit(128 + signal)
 
     signal.signal(signal.SIGTERM, sigterm_handler)
@@ -485,6 +487,7 @@ def main():
         app.run()
     except KeyboardInterrupt:
         # catch keyboard interrupt and simply exit
+        tmp_config_dir.cleanup()
         logger.info("Done")
         sys.stdout.flush()
         # Holoscan graph execution framework handles all cleanup
@@ -492,10 +495,13 @@ def main():
         # (which would result in a segfault from double free)
         os._exit(0)
     except SystemExit as e:
+        tmp_config_dir.cleanup()
         # Holoscan graph execution framework handles all cleanup
         # so we just need to exit immediately without further Python cleanup
         # (which would result in a segfault from double free)
         os._exit(e.code)
+    else:
+        tmp_config_dir.cleanup()
 
 
 if __name__ == "__main__":
