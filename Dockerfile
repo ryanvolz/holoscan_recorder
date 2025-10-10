@@ -73,7 +73,7 @@ LABEL org.opencontainers.image.description="Holoscan VSWORD recorder"
 
 # Set capabilities on python binary needed by DPDK used by the recorder script
 # (https://doc.dpdk.org/guides-24.11/platform/mlx5.html, running as non-root)
-RUN setcap cap_net_raw,cap_dac_override,cap_dac_read_search,cap_ipc_lock,cap_sys_admin+ep $(realpath $(which python3))
+RUN setcap cap_net_admin,cap_net_raw,cap_dac_override,cap_dac_read_search,cap_ipc_lock,cap_sys_admin,cap_sys_rawio+ep $(realpath $(which python3))
 
 # Copy scripts specific to this image
 COPY --chmod=777 vsword/vsword_recorder.py /app/vsword_recorder.py
