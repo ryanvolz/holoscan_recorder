@@ -198,8 +198,11 @@ class Spectrogram(holoscan.core.Operator):
         ):
             pass
         plan_cache = cp.fft.config.get_plan_cache()
+        # most recently used plan is the first in the cache when iterating,
+        # which is the one we want to save for re-use with this operator
         for key, node in plan_cache:
             self.cufft_plan = node.plan
+            break
 
     def compute(
         self,
