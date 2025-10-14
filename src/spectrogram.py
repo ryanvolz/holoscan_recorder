@@ -598,8 +598,7 @@ class SpectrogramOutput(holoscan.core.Operator):
             # skip writing because we already wrote this data
             return
 
-        sample_idx_arr = self.spec_sample_idx[: (chunk_idx + 1)]
-        secs, picosecs = timestamp_floor(sample_idx_arr, self.sample_rate_frac)
+        secs, picosecs = timestamp_floor(self.spec_sample_idx, self.sample_rate_frac)
         microsecs = picosecs // 1_000_000
         spec_start_dt = drf.util.epoch + datetime.timedelta(
             seconds=int(secs[0]), microseconds=int(microsecs[0])
@@ -611,6 +610,8 @@ class SpectrogramOutput(holoscan.core.Operator):
         )
 
         output_spec_data = self.spec_data[..., : (chunk_idx + 1)]
+        output_sample_idx = self.spec_sample_idx[: (chunk_idx + 1)]
+        output_time_idx = time_idx[..., : (chunk_idx + 1)]
 
         self.logger.info(f"Outputting spectrogram for time {spec_start_dt}")
 
@@ -618,15 +619,15 @@ class SpectrogramOutput(holoscan.core.Operator):
         for retry in range(0, num_retries):
             try:
                 self.dmd_writer.write(
-                    [int(sample_idx_arr[0])],
+                    [int(output_sample_idx[0])],
                     [
                         {
                             "spectrogram": output_spec_data.transpose((1, 0, 2)),
                             "freq_idx": self.spec_freq_idx
                             + self.stored_metadata.center_freq,
-                            "sample_idx": sample_idx_arr,
-                            "time_idx": time_idx.astype(
-                                h5py.opaque_dtype(time_idx.dtype)
+                            "sample_idx": output_sample_idx,
+                            "time_idx": output_time_idx.astype(
+                                h5py.opaque_dtype(output_time_idx.dtype)
                             ),
                             "center_freq": self.stored_metadata.center_freq,
                         }
@@ -646,11 +647,12 @@ class SpectrogramOutput(holoscan.core.Operator):
             output_spec_data, 15, axis=(0, 2), keepdims=True
         )
         spec_power_db = 10 * np.log10(output_spec_data / reference_pwr)
+        # delta from time_idx b/c it will have a [1], while output_time_idx might not
         delta_t = time_idx[1] - time_idx[0]
         delta_f = self.spec_freq_idx[1] - self.spec_freq_idx[0]
         extent = (
-            time_idx[0],
-            time_idx[-1] + delta_t,
+            output_time_idx[0],
+            output_time_idx[-1] + delta_t,
             (self.stored_metadata.center_freq + self.spec_freq_idx[0] - delta_f / 2)
             / 1e6,
             (self.stored_metadata.center_freq + self.spec_freq_idx[-1] + delta_f / 2)
