@@ -105,12 +105,27 @@ async def run_drf_mirror(service):
     command = [
         "drf",
         "mirror",
-        "mv",
-        "--verbose",
+        "cp",
         str(service.ram_ringbuffer_path),
         str(service.output_path),
     ]
     await anyio.run_process(command, stdout=None, stderr=None, check=False)
+
+
+async def run_drf_ringbuffer(service):
+    command = [
+        "drf",
+        "ringbuffer",
+        "-l",
+        "1",
+        "--status_interval",
+        "10",
+        str(service.ram_ringbuffer_path),
+    ]
+    try:
+        await anyio.run_process(command, stdout=None, stderr=None, check=False)
+    finally:
+        shutil.rmtree(service.ram_ringbuffer_path, ignore_errors=True)
 
 
 async def run_drf_mirror_tmp(service):
@@ -132,6 +147,8 @@ async def run_drf_ringbuffer_tmp(service):
         "ringbuffer",
         "-l",
         "1",
+        "--status_interval",
+        "31536000",
         str(service.tmp_ringbuffer_path),
     ]
     try:
@@ -284,6 +301,7 @@ async def main(service):
                 ):
                     async with anyio.create_task_group() as tg:
                         tg.start_soon(run_drf_mirror, service)
+                        tg.start_soon(run_drf_ringbuffer, service)
                         tg.start_soon(run_drf_mirror_tmp, service)
                         tg.start_soon(run_drf_ringbuffer_tmp, service)
                         tg.start_soon(process_commands, client, service, tg)
