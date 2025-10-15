@@ -208,12 +208,12 @@ def build_config_parser():
 
     # non-operator arguments that we use from recorder_service
     parser.add_argument(
-        "--ram_ringbuffer_path", type=typing.Optional(os.PathLike), default="."
+        "--ram_ringbuffer_path", type=typing.Optional[os.PathLike], default="."
     )
     parser.link_arguments(
         "ram_ringbuffer_path", "drf_sink.output_path", apply_on="parse"
     )
-    parser.add_argument("--output_path", type=typing.Optional(os.PathLike), default=".")
+    parser.add_argument("--output_path", type=typing.Optional[os.PathLike], default=".")
     parser.link_arguments(
         "output_path", "spectrogram_output.output_path", apply_on="parse"
     )
