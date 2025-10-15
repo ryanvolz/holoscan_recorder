@@ -15,12 +15,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import base64
 import dataclasses
 import datetime
 import fractions
+import json
 import logging
 import os
 import pathlib
+import socket
 import traceback
 import typing
 
@@ -33,6 +36,7 @@ import holoscan
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
+import paho.mqtt.client as mqtt
 from holohub import rf_array
 from jsonargparse.typing import PositiveInt
 
@@ -287,6 +291,200 @@ class Spectrogram(holoscan.core.Operator):
                 out=spec_pinned[..., spec_count], blocking=False
             )
             yield host_spec
+
+
+@dataclasses.dataclass
+class SpectrogramMQTTParams:
+    """Spectrogram MQTT output parameters"""
+
+    spec_sample_cadence: typing.Optional[PositiveInt] = None
+    """Number of RF samples that go into each spectrum input chunk"""
+    input_buffer_capacity: PositiveInt = 10
+    """Size of the input buffer, > 1 so upstream operator is not held up"""
+    service_name: str = "recorder_fft"
+    """Service name to use when publishing over MQTT"""
+    node_id: typing.Optional[str] = None
+    """Identifier (e.g. MAC address) for this node when publishing over MQTT"""
+    status_topic: str = "{service_name}/status"
+    """MQTT topic for publishing status. Can contain format identifiers
+       '{service_name}' or '{node_id}' which are substituted with those values."""
+    data_topic: str = "radiohound/clients/data/{node_id}"
+    """MQTT topic for publishing data. Can contain format identifiers
+       '{service_name}' or '{node_id}' which are substituted with those values."""
+    mqtt_host: str = "localhost"
+    """Hostname or IP address of the MQTT broker"""
+    mqtt_port: int = 1883
+    """Network port of the MQTT broker"""
+    mqtt_keepalive: int = 60
+    """Maximum period in seconds between communications with the MQTT broker"""
+
+
+class SpectrogramMQTT(holoscan.core.Operator):
+    spec_sample_cadence: int
+    input_buffer_capacity: int
+    service_name: str
+    node_id: str
+    status_topic: str
+    data_topic: str
+    mqtt_host: str
+    mqtt_port: int
+    mqtt_keepalive: int
+
+    def __init__(
+        self,
+        fragment,
+        *args,
+        spec_sample_cadence,
+        input_buffer_capacity=10,
+        service_name="recorder_fft",
+        node_id=None,
+        status_topic="{service_name}/status",
+        data_topic="radiohound/clients/data/{node_id}",
+        mqtt_host="localhost",
+        mqtt_port=1883,
+        mqtt_keepalive=60,
+        **kwargs,
+    ):
+        """Operator that computes spectrograms from RF data.
+
+        **==Named Inputs==**
+
+            spec_in : dict[spec: array, rf_metadata: RFMetadata]
+                Dictionary containing a spectrum and rf_metadata.
+
+        Parameters
+        ----------
+        fragment : Fragment
+            The fragment that the operator belongs to
+        spec_sample_cadence: int
+            Number of RF samples that go into each spectrum input chunk
+        input_buffer_capacity: int
+            Size of the input buffer, > 1 so upstream operator is not held up
+        service_name: str
+            Service name to use when publishing over MQTT
+        node_id: str, optional
+            Identifier (e.g. MAC address) for this node when publishing over MQTT.
+            If None, use $NODE_ID environment variable and fall back to hostname.
+        status_topic: str
+            MQTT topic for publishing status. Can contain format identifiers
+            '{service_name}' or '{node_id}' which are substituted with those values.
+        data_topic: str
+            MQTT topic for publishing data. Can contain format identifiers
+            '{service_name}' or '{node_id}' which are substituted with those values.
+        mqtt_host: str
+            Hostname or IP address of the MQTT broker
+        mqtt_port: int
+            Network port of the MQTT broker
+        mqtt_keepalive: int
+            Maximum period in seconds between communications with the MQTT broker
+        """
+        self.spec_sample_cadence = spec_sample_cadence
+        self.input_buffer_capacity = input_buffer_capacity
+        self.service_name = service_name
+        self.node_id = node_id
+        if self.node_id is None:
+            self.node_id = os.getenv("NODE_ID", socket.gethostname())
+        self.status_topic = status_topic.format(
+            service_name=self.service_name, node_id=self.node_id
+        )
+        self.data_topic = data_topic.format(
+            service_name=self.service_name, node_id=self.node_id
+        )
+        self.mqtt_host = mqtt_host
+        self.mqtt_port = mqtt_port
+        self.mqtt_keepalive = mqtt_keepalive
+
+        super().__init__(fragment, *args, **kwargs)
+        self.logger = logging.getLogger("holoscan.rf_array.SpectrogramMQTT")
+
+    def setup(self, spec: holoscan.core.OperatorSpec):
+        spec.input("spec_in").connector(
+            holoscan.core.IOSpec.ConnectorType.DOUBLE_BUFFER,
+            capacity=self.input_buffer_capacity,
+            policy=0,  # pop
+        )
+
+    def initialize(self):
+        self.logger.debug("Initializing spectrogram MQTT output operator")
+
+        self.mqtt_client = mqtt.Client(client_id=self.service_name)
+        self.mqtt_client.will_set(
+            self.status_topic, payload='{"state": "offline"}', qos=0, retain=True
+        )
+        try:
+            self.mqtt_client.connect(
+                host=self.mqtt_host, port=self.mqtt_port, keepalive=self.mqtt_keepalive
+            )
+            self.mqtt_client.loop_start()
+        except Exception:
+            self.logger.exception("Failed to connect to MQTT broker")
+        self.mqtt_client.enable_logger(self.logger)
+        self.mqtt_client.publish(
+            self.status_topic, payload='{"state": "online"}', qos=0, retain=True
+        )
+
+    def compute(
+        self,
+        op_input: holoscan.core.InputContext,
+        op_output: holoscan.core.OutputContext,
+        context: holoscan.core.ExecutionContext,
+    ):
+        spec_message = op_input.receive("spec_in")
+        # get stream and synchronize to ensure data is in host memory before proceeding
+        # (do this here because input buffer is large and therefore waiting on this
+        #  operator does not slow down upstream operators)
+        stream_ptr = op_input.receive_cuda_stream("spec_in", allocate=True)
+        stream = cp.cuda.ExternalStream(stream_ptr)
+        stream.synchronize()
+        while spec_message is not None:
+            self.compute_one(spec_message)
+            # try to receive again to either get another message or exit the while loop
+            spec_message = op_input.receive("spec_in")
+
+    def compute_one(self, spec_message):
+        spec_arr = np.from_dlpack(spec_message["spec"])
+        rf_metadata = spec_message["metadata"]
+
+        sample_rate_frac = fractions.Fraction(
+            rf_metadata.sample_rate_numerator, rf_metadata.sample_rate_denominator
+        )
+        spec_freq_idx = np.fft.fftshift(
+            np.fft.fftfreq(spec_arr.shape[0], 1 / sample_rate_frac)
+        )
+
+        payload = {
+            "data": base64.b64encode(np.squeeze(spec_arr).copy(order="C")).decode(
+                "utf-8"
+            ),
+            "mac_address": self.node_id,
+            "type": "float32",
+            "short_name": "MEP",
+            "software_version": "v0.10b30",
+            "latitude": 41.699584,
+            "longitude": -86.237237,
+            "altitude": 2,
+            "batch": 0,
+            "sample_rate": float(sample_rate_frac),
+            "center_frequency": float(rf_metadata.center_freq),
+            "timestamp": None,
+            "gain": 1,
+            "metadata": {
+                "data_type": "periodogram",
+                "fmin": int(min(spec_freq_idx)),
+                "fmax": int(max(spec_freq_idx)),
+                "nfft": spec_arr.shape[0],
+                "xcount": spec_arr.shape[0],
+                "gps_lock": False,
+                "scan_time": 0.0,
+            },
+        }
+        try:
+            self.mqtt_client.publish(self.data_topic, payload=json.dumps(payload))
+        except Exception:
+            self.logger.exception("Failed to publish spectrogram payload")
+
+    def stop(self):
+        self.mqtt_client.disconnect()
 
 
 @dataclasses.dataclass

@@ -41,6 +41,8 @@ from jsonargparse.typing import NonNegativeInt, PositiveInt
 
 from spectrogram import (
     Spectrogram,
+    SpectrogramMQTT,
+    SpectrogramMQTTParams,
     SpectrogramOutput,
     SpectrogramOutputParams,
     SpectrogramParams,
@@ -111,7 +113,11 @@ class PipelineParams:
     metadata: bool = True
     "Enable / disable writing inherent and user-supplied Digital RF metadata"
     spectrogram: bool = True
-    "Enable / disable spectrogram processing and output"
+    "Enable / disable spectrogram processing"
+    spectrogram_mqtt: bool = True
+    "Enable / disable spectrogram output over MQTT"
+    spectrogram_output: bool = True
+    "Enable / disable spectrogram output to files"
 
 
 @dataclasses.dataclass
@@ -197,6 +203,7 @@ def build_config_parser():
         "--metadata", type=typing.Optional[dict[str, typing.Any]], default=None
     )
     parser.add_argument("--spectrogram", type=SpectrogramParams)
+    parser.add_argument("--spectrogram_mqtt", type=SpectrogramMQTTParams)
     parser.add_argument("--spectrogram_output", type=SpectrogramOutputParams)
 
     # non-operator arguments that we use from recorder_service
@@ -353,33 +360,58 @@ class App(holoscan.core.Application):
                 # )
                 self.add_flow(last_op, spectrogram)
 
-                spec_out_kwargs = self.kwargs("spectrogram_output")
-                spec_out_kwargs.update(
-                    nfft=spectrogram.nfft,
-                    spec_sample_cadence=spectrogram.spec_sample_cadence,
-                    num_subchannels=spectrogram.num_subchannels,
-                    data_subdir=(
-                        f"{self.kwargs('drf_sink')['channel_dir']}_spectrogram"
-                    ),
-                )
-                spectrogram_output = SpectrogramOutput(
-                    self,
-                    ## CudaStreamCondition doesn't work with a message queue size
-                    ## larger than 1, so get by without it for now
-                    # holoscan.conditions.MessageAvailableCondition(
-                    #     self,
-                    #     receiver="spec_in",
-                    #     name="spectrogram_output_message_available",
-                    # ),
-                    # holoscan.conditions.CudaStreamCondition(
-                    #     self, receiver="spec_in", name="spectrogram_output_stream_sync"
-                    # ),
-                    # # no downstream condition, and we don't want one
-                    cuda_stream_pool,
-                    name="spectrogram_output",
-                    **spec_out_kwargs,
-                )
-                self.add_flow(spectrogram, spectrogram_output)
+                if self.kwargs("pipeline")["spectrogram_mqtt"]:
+                    spec_mqtt_kwargs = self.kwargs("spectrogram_mqtt")
+                    spec_mqtt_kwargs.update(
+                        spec_sample_cadence=spectrogram.spec_sample_cadence,
+                    )
+                    spectrogram_mqtt = SpectrogramMQTT(
+                        self,
+                        ## CudaStreamCondition doesn't work with a message queue size
+                        ## larger than 1, so get by without it for now
+                        # holoscan.conditions.MessageAvailableCondition(
+                        #     self,
+                        #     receiver="spec_in",
+                        #     name="spectrogram_mqtt_message_available",
+                        # ),
+                        # holoscan.conditions.CudaStreamCondition(
+                        #     self, receiver="spec_in", name="spectrogram_mqtt_stream_sync"
+                        # ),
+                        # # no downstream condition, and we don't want one
+                        cuda_stream_pool,
+                        name="spectrogram_mqtt",
+                        **spec_mqtt_kwargs,
+                    )
+                    self.add_flow(spectrogram, spectrogram_mqtt)
+
+                if self.kwargs("pipeline")["spectrogram_output"]:
+                    spec_out_kwargs = self.kwargs("spectrogram_output")
+                    spec_out_kwargs.update(
+                        nfft=spectrogram.nfft,
+                        spec_sample_cadence=spectrogram.spec_sample_cadence,
+                        num_subchannels=spectrogram.num_subchannels,
+                        data_subdir=(
+                            f"{self.kwargs('drf_sink')['channel_dir']}_spectrogram"
+                        ),
+                    )
+                    spectrogram_output = SpectrogramOutput(
+                        self,
+                        ## CudaStreamCondition doesn't work with a message queue size
+                        ## larger than 1, so get by without it for now
+                        # holoscan.conditions.MessageAvailableCondition(
+                        #     self,
+                        #     receiver="spec_in",
+                        #     name="spectrogram_output_message_available",
+                        # ),
+                        # holoscan.conditions.CudaStreamCondition(
+                        #     self, receiver="spec_in", name="spectrogram_output_stream_sync"
+                        # ),
+                        # # no downstream condition, and we don't want one
+                        cuda_stream_pool,
+                        name="spectrogram_output",
+                        **spec_out_kwargs,
+                    )
+                    self.add_flow(spectrogram, spectrogram_output)
 
             if self.kwargs("pipeline")["int_converter"]:
                 int_converter = rf_array.TypeConversionComplexFloatToInt(

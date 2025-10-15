@@ -25,6 +25,8 @@ pipeline:
   resampler0: true
   digital_rf0: true
   spectrogram0: true
+  spectrogram_mqtt0: true
+  spectrogram_output0: true
   metadata0: true
   selector1: true
   converter1: true
@@ -32,14 +34,16 @@ pipeline:
   resampler1: true
   digital_rf1: true
   spectrogram1: true
+  spectrogram_mqtt1: true
+  spectrogram_output1: true
   metadata1: true
 
 packet_common: &common_packet_config
   interface_name: rx_port
   use_header_data_split: true
   gpu_direct: true
-  batch_size: &batch_size 625 # Number of packets to process at once into tensor data
-  batch_capacity: 5 # Number of batches that can be queued and processed at once
+  batch_size: &batch_size 3125 # Number of packets to process at once into tensor data
+  batch_capacity: 1 # Number of batches that can be queued and processed at once
   max_packet_size: &max_packet_size 4160
   num_subchannels: &num_subchannels 8 # Number of IQ subchannels of data that form a sample
   num_samples: &rx_chunk_size 400000 # Number of samples to output as a single chunk, must fit one batch of packets
@@ -73,7 +77,8 @@ advanced_network:
         affinity: 0
         access:
           - local
-        num_bufs: &three_batch_size 1875
+        # Should hold at least 3 * batch_size and have a minimum of 8192
+        num_bufs: &num_bufs 9375
         # Size of the Ethernet header + IP header + UDP header
         buf_size: 42
       - name: "Ch0_Packets_GPU"
@@ -81,14 +86,14 @@ advanced_network:
         affinity: 0
         access:
           - local
-        num_bufs: *three_batch_size
+        num_bufs: *num_bufs
         buf_size: *max_packet_size
       - name: "Ch1_Packets_GPU"
         kind: "device"
         affinity: 0
         access:
           - local
-        num_bufs: *three_batch_size
+        num_bufs: *num_bufs
         buf_size: *max_packet_size
     interfaces:
       - name: rx_port
@@ -172,12 +177,21 @@ spectrogram0:
   reduce_op: max
   num_spectra_per_chunk: 1
 
+spectrogram_mqtt0:
+  input_buffer_capacity: 10
+  service_name: spectrogram_emvsis
+  status_topic: "{service_name}/status"
+  data_topic: "{service_name}/data"
+  mqtt_host: "localhost"
+  mqtt_port: 1883
+  mqtt_keepalive: 60
+
 spectrogram_output0:
   num_spectra_per_output: 600
   figsize:
-    - 6.4
-    - 4.8
-  dpi: 200
+    - 15
+    - 6
+  dpi: 300
   col_wrap: 1
   cmap: viridis
   snr_db_min: -5
@@ -226,12 +240,21 @@ spectrogram1:
   reduce_op: max
   num_spectra_per_chunk: 1
 
+spectrogram_mqtt1:
+  input_buffer_capacity: 10
+  service_name: spectrogram_zephyr
+  status_topic: "{service_name}/status"
+  data_topic: "{service_name}/data"
+  mqtt_host: "localhost"
+  mqtt_port: 1883
+  mqtt_keepalive: 60
+
 spectrogram_output1:
   num_spectra_per_output: 600
   figsize:
-    - 6.4
-    - 4.8
-  dpi: 200
+    - 15
+    - 6
+  dpi: 300
   col_wrap: 1
   cmap: viridis
   snr_db_min: -5

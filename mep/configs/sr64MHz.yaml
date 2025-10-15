@@ -29,6 +29,8 @@ pipeline:
   digital_rf: true
   metadata: true
   spectrogram: false
+  spectrogram_mqtt: true
+  spectrogram_output: true
 
 packet:
   batch_size: &batch_size 625 # Number of packets to process at once into tensor data
@@ -77,6 +79,15 @@ spectrogram:
   detrend: false
   reduce_op: max
   num_spectra_per_chunk: 1
+
+spectrogram_mqtt:
+  input_buffer_capacity: 10
+  service_name: recorder_fft
+  status_topic: "{service_name}/status"
+  data_topic: "radiohound/clients/data/{node_id}"
+  mqtt_host: "localhost"
+  mqtt_port: 1883
+  mqtt_keepalive: 60
 
 spectrogram_output:
   num_spectra_per_output: 600
