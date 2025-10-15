@@ -266,18 +266,18 @@ def build_config_parser():
         "--spectrogram_mqtt0",
         type=SpectrogramMQTTParams,
         default=SpectrogramMQTTParams(
-            service_name="spectrogram_emvsis",
-            status_topic="{service_name}/status",
-            data_topic="{service_name}/data",
+            service_name="spectrogram-emvsis",
+            status_topic="dt/vsword/{service_name}/{node_id}/status",
+            data_topic="dt/vsword/{service_name}/{node_id}/data",
         ),
     )
     parser.add_argument(
         "--spectrogram_mqtt1",
         type=SpectrogramMQTTParams,
         default=SpectrogramMQTTParams(
-            service_name="spectrogram_zephyr",
-            status_topic="{service_name}/status",
-            data_topic="{service_name}/data",
+            service_name="spectrogram-zephyr",
+            status_topic="dt/vsword/{service_name}/{node_id}/status",
+            data_topic="dt/vsword/{service_name}/{node_id}/data",
         ),
     )
     parser.add_argument(
