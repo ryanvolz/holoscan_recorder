@@ -4,6 +4,7 @@ import os
 import pathlib
 import shutil
 import signal
+import socket
 import time
 import traceback
 from typing import Any, Optional
@@ -22,6 +23,7 @@ class RecorderService:
     command_topic: str = "{service.name}/command"
     config_path: os.PathLike = "config"
     name: str = "recorder"
+    node_id: Optional[str] = None
     output_path: os.PathLike = "/data/ringbuffer"
     ram_ringbuffer_path: os.PathLike = "."
     script_path: os.PathLike = "recorder.py"
@@ -40,6 +42,8 @@ class RecorderService:
     )
 
     def __post_init__(self):
+        if self.node_id is None:
+            self.node_id = os.getenv("NODE_ID", socket.gethostname())
         self.config_path = pathlib.Path(self.config_path)
         self.output_path = pathlib.Path(self.output_path)
         self.ram_ringbuffer_path = pathlib.Path(self.ram_ringbuffer_path)
