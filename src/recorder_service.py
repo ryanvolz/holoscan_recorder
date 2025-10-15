@@ -18,12 +18,15 @@ from ruamel.yaml import YAML
 @dataclasses.dataclass(kw_only=True)
 class RecorderService:
     # service configuration variables
+    announce_topic: str = "announce/{service.name}"
+    command_topic: str = "{service.name}/command"
     config_path: os.PathLike = "config"
     name: str = "recorder"
     output_path: os.PathLike = "/data/ringbuffer"
     ram_ringbuffer_path: os.PathLike = "."
     script_path: os.PathLike = "recorder.py"
     start_config: str = "default"
+    status_topic: str = "{service.name}/status"
     tmp_ringbuffer_path: os.PathLike = "/data/tmp-ringbuffer"
     # service state variables
     config: dict[str, Any] = dataclasses.field(default_factory=dict, init=False)
@@ -42,6 +45,10 @@ class RecorderService:
         self.ram_ringbuffer_path = pathlib.Path(self.ram_ringbuffer_path)
         self.script_path = pathlib.Path(self.script_path)
         self.tmp_ringbuffer_path = pathlib.Path(self.tmp_ringbuffer_path)
+
+        self.announce_topic = self.announce_topic.format(service=self)
+        self.command_topic = self.command_topic.format(service=self)
+        self.status_topic = self.status_topic.format(service=self)
 
 
 def load_configs(service):
@@ -69,7 +76,7 @@ async def send_announce(client, service):
         "type": "service",
         "time_started": time.time(),
     }
-    await client.publish(f"announce/{service.name}", json.dumps(payload), retain=True)
+    await client.publish(service.announce_topic, json.dumps(payload), retain=True)
 
 
 async def send_status(client, service):
@@ -77,7 +84,7 @@ async def send_status(client, service):
         "state": "recording" if service.recording_enabled else "waiting",
         "timestamp": time.time(),
     }
-    await client.publish(f"{service.name}/status", json.dumps(payload), retain=True)
+    await client.publish(service.status_topic, json.dumps(payload), retain=True)
 
 
 async def send_error(client, service, message, response_topic=None):
@@ -291,7 +298,7 @@ async def main(service):
     while True:
         try:
             async with client:
-                await client.subscribe(f"{service.name}/command")
+                await client.subscribe(service.command_topic)
                 await send_announce(client, service)
                 await send_status(client, service)
                 with exceptiongroup.catch(
