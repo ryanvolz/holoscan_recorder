@@ -266,14 +266,21 @@ class App(holoscan.core.Application):
             self.kwargs("packet")["num_samples"],
             self.kwargs("packet")["num_subchannels"],
         )
+        last_buffer_capacity = packet_kwargs.get("buffer_size", 4)
         last_op = net_connector_rx
 
         if self.kwargs("pipeline")["selector"]:
             selector = rf_array.SubchannelSelect_sc16(
                 self, cuda_stream_pool, name="selector", **self.kwargs("selector")
             )
+            selector.spec.inputs["rf_in"].connector(
+                holoscan.core.IOSpec.ConnectorType.DOUBLE_BUFFER,
+                capacity=last_buffer_capacity,
+                policy=0,  # pop
+            )
             self.add_flow(last_op, selector)
             last_op = selector
+            last_buffer_capacity = 1
             last_chunk_shape = (
                 last_chunk_shape[0],
                 len(self.kwargs("selector")["subchannel_idx"]),
@@ -285,8 +292,14 @@ class App(holoscan.core.Application):
                 cuda_stream_pool,
                 name="converter",
             )
+            converter.spec.inputs["rf_in"].connector(
+                holoscan.core.IOSpec.ConnectorType.DOUBLE_BUFFER,
+                capacity=last_buffer_capacity,
+                policy=0,  # pop
+            )
             self.add_flow(last_op, converter)
             last_op = converter
+            last_buffer_capacity = 1
 
             if self.kwargs("pipeline")["rotator"]:
                 rotator = rf_array.RotatorScheduled(
