@@ -16,7 +16,7 @@
 ############################################################
 # Base image
 ############################################################
-FROM ghcr.io/ryanvolz/holohub/rf-array:rf_array AS base
+FROM ghcr.io/ryanvolz/holohub/rf-array:v1.3 AS base
 
 # Set up environment variables
 ENV HOLOSCAN_EXECUTOR_LOG_LEVEL=WARN
