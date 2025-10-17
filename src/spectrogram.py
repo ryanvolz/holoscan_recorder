@@ -451,6 +451,12 @@ class SpectrogramMQTT(holoscan.core.Operator):
         spec_freq_idx = np.fft.fftshift(
             np.fft.fftfreq(spec_arr.shape[0], 1 / sample_rate_frac)
         )
+        secs, picosecs = timestamp_floor(rf_metadata.sample_idx, sample_rate_frac)
+        spec_timestamp_dt = datetime.datetime.fromtimestamp(
+            secs + 1e-12 * picosecs, datetime.timezone.utc
+        )
+        spec_timestamp_str = spec_timestamp_dt.isoformat()
+        scan_time = float(self.spec_sample_cadence / sample_rate_frac)
 
         payload = {
             "data": base64.b64encode(np.squeeze(spec_arr).copy(order="C")).decode(
@@ -466,7 +472,7 @@ class SpectrogramMQTT(holoscan.core.Operator):
             "batch": 0,
             "sample_rate": float(sample_rate_frac),
             "center_frequency": float(rf_metadata.center_freq),
-            "timestamp": None,
+            "timestamp": spec_timestamp_str,
             "gain": 1,
             "metadata": {
                 "data_type": "periodogram",
@@ -475,7 +481,7 @@ class SpectrogramMQTT(holoscan.core.Operator):
                 "nfft": spec_arr.shape[0],
                 "xcount": spec_arr.shape[0],
                 "gps_lock": False,
-                "scan_time": 0.0,
+                "scan_time": scan_time,
             },
         }
         try:
