@@ -93,7 +93,7 @@ async def send_status(client, service):
 
 async def send_error(client, service, message, response_topic=None):
     if response_topic is None:
-        response_topic = f"{service.name}/error"
+        response_topic = service.status_topic
     payload = {
         "message": message,
         "timestamp": time.time(),
