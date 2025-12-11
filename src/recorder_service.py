@@ -103,7 +103,7 @@ async def send_error(client, service, message, response_topic=None):
 
 async def send_config(client, service, value, response_topic=None):
     if response_topic is None:
-        response_topic = f"{service.name}/config/response"
+        response_topic = service.status_topic
 
     payload = {
         "value": value,
@@ -249,7 +249,7 @@ async def process_config_command(client, service, payload):
         if cmd == "list":
             available_config_names = sorted(list(service.loadable_configs.keys()))
             if response_topic is None:
-                response_topic = f"{service.name}/config/response"
+                response_topic = service.status_topic
             payload = {
                 "available_configs": available_config_names,
                 "timestamp": time.time(),
