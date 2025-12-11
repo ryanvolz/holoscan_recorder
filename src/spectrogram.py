@@ -482,6 +482,7 @@ class SpectrogramMQTT(holoscan.core.Operator):
                 "xcount": spec_arr.shape[0],
                 "gps_lock": False,
                 "scan_time": scan_time,
+                "archiveResult": False,
             },
         }
         try:
