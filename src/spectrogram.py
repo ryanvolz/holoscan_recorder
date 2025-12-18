@@ -677,7 +677,6 @@ class SpectrogramOutput(holoscan.core.Operator):
         xformatter = mpl.dates.ConciseDateFormatter(xlocator)
         axs_1d = []
         imgs = []
-        ref_lvl_texts = []
         for sch in range(self.num_subchannels):
             row_idx = sch // self.col_wrap
             col_idx = sch % self.col_wrap
@@ -690,36 +689,31 @@ class SpectrogramOutput(holoscan.core.Operator):
                 interpolation="none",
                 origin="lower",
             )
-            cb = fig.colorbar(img, ax=ax, fraction=0.05, pad=0.01)
-            cb.set_label("Power relative to reference [dB]")
-            ax.set_ylabel("Frequency [MHz]")
             if self.num_subchannels > 1:
-                title = ax.set_title(f"Subchannel {sch}", fontsize="small")
-            else:
-                title = ax.set_title(" ", fontsize="small")
-            ref_lvl_text = ax.text(
-                1.0,
-                title.get_position()[1],
-                "Ref: 1.23e-9 [$V_{ADC}^2$]",
-                fontsize="small",
-                fontstyle="italic",
-                va=title.get_verticalalignment(),
-                ha="right",
-                transform=title.get_transform(),
-            )
+                ax.set_title(f"Subchannel {sch}", fontsize="small", pad=3.0)
             ax.xaxis.set_major_locator(xlocator)
             ax.xaxis.set_major_formatter(xformatter)
             imgs.append(img)
             axs_1d.append(ax)
-            ref_lvl_texts.append(ref_lvl_text)
-        axs_1d[-1].set_xlabel("Time (UTC)")
-        self.suptitle = fig.suptitle("Spectrogram", fontsize="medium")
+        cb = fig.colorbar(imgs[0], ax=axs, fraction=0.05, pad=0.01)
+        cb.set_label("Power relative to reference [dB]")
         fig.autofmt_xdate(rotation=0, ha="center")
+        fig.supxlabel("Time (UTC)", fontsize="medium")
+        fig.supylabel("Frequency [MHz]", fontsize="medium")
+        self.suptitle = fig.suptitle("Spectrogram", fontsize="medium")
+        self.ref_lvl_text = fig.text(
+            1.0,
+            1.0,
+            "Ref: 1.23e-9 [$V_{ADC}^2$]",
+            fontsize="small",
+            fontstyle="italic",
+            va="top",
+            ha="right",
+        )
 
         self.fig = fig
         self.axs = axs_1d
         self.imgs = imgs
-        self.ref_lvl_texts = ref_lvl_texts
 
     def compute(
         self,
@@ -848,9 +842,7 @@ class SpectrogramOutput(holoscan.core.Operator):
         freqstr = f"{self.stored_metadata.center_freq / 1e6:n}MHz"
         datestr = spec_start_dt.strftime("%Y-%m-%d")
 
-        reference_pwr = np.nanpercentile(
-            output_spec_data, 15, axis=(0, 2), keepdims=True
-        )
+        reference_pwr = np.nanpercentile(output_spec_data, 15)
         spec_power_db = 10 * np.log10(output_spec_data / reference_pwr)
         # delta from time_idx b/c it will have a [1], while output_time_idx might not
         delta_t = time_idx[1] - time_idx[0]
@@ -868,9 +860,7 @@ class SpectrogramOutput(holoscan.core.Operator):
                 data=spec_power_db[:, sch, :],
                 extent=extent,
             )
-            self.ref_lvl_texts[sch].set_text(
-                f"Ref: {float(reference_pwr[0, sch, 0]):.3n} [$V_{{ADC}}^2$]"
-            )
+        self.ref_lvl_text.set_text(f"Ref: {float(reference_pwr):.3n} [$V_{{ADC}}^2$]")
         self.suptitle.set_text(
             f"{self.data_path.parent.name}/{self.data_path.name} @ {freqstr}"
         )
