@@ -672,7 +672,7 @@ class SpectrogramOutput(holoscan.core.Operator):
             dpi=self.dpi,
         )
         fig.get_layout_engine().set(w_pad=1 / 72, h_pad=1 / 72)
-        self.norm = mpl.colors.Normalize(vmin=self.snr_db_min, vmax=self.snr_db_max)
+        self.norm = mpl.colors.Normalize(vmin=self.snr_db_min - self.snr_db_max, vmax=0)
         xlocator = mpl.dates.AutoDateLocator(minticks=3, maxticks=7)
         xformatter = mpl.dates.ConciseDateFormatter(xlocator)
         axs_1d = []
@@ -696,15 +696,15 @@ class SpectrogramOutput(holoscan.core.Operator):
             imgs.append(img)
             axs_1d.append(ax)
         cb = fig.colorbar(imgs[0], ax=axs, fraction=0.05, pad=0.01)
-        cb.set_label("Power relative to reference [dB]")
+        cb.set_label("Power relative to full scale [dBFS]")
         fig.autofmt_xdate(rotation=0, ha="center")
         fig.supxlabel("Time (UTC)", fontsize="medium")
         fig.supylabel("Frequency [MHz]", fontsize="medium")
         self.suptitle = fig.suptitle("Spectrogram", fontsize="medium")
         self.ref_lvl_text = fig.text(
-            1.0,
-            1.0,
-            "Ref: 1.23e-9 [$V_{ADC}^2$]",
+            0.995,
+            0.995,
+            "Noise: -100.00 [dBFS]",
             fontsize="small",
             fontstyle="italic",
             va="top",
@@ -843,7 +843,12 @@ class SpectrogramOutput(holoscan.core.Operator):
         datestr = spec_start_dt.strftime("%Y-%m-%d")
 
         reference_pwr = np.nanpercentile(output_spec_data, 15)
-        spec_power_db = 10 * np.log10(output_spec_data / reference_pwr)
+        ref_pwr_dbfs = 10 * np.log10(reference_pwr)
+        # use rounded ref power to set scale so it is consistent for small noise changes
+        ref_pwr_dbfs_rnd = np.round(ref_pwr_dbfs)
+        self.norm.vmax = np.minimum(ref_pwr_dbfs_rnd + self.snr_db_max, 5 * np.log10(2))
+        self.norm.vmin = ref_pwr_dbfs_rnd + self.snr_db_min
+        spec_power_dbfs = 10 * np.log10(output_spec_data)
         # delta from time_idx b/c it will have a [1], while output_time_idx might not
         delta_t = time_idx[1] - time_idx[0]
         delta_f = self.spec_freq_idx[1] - self.spec_freq_idx[0]
@@ -857,10 +862,10 @@ class SpectrogramOutput(holoscan.core.Operator):
         )
         for sch in range(self.num_subchannels):
             self.imgs[sch].set(
-                data=spec_power_db[:, sch, :],
+                data=spec_power_dbfs[:, sch, :],
                 extent=extent,
             )
-        self.ref_lvl_text.set_text(f"Ref: {float(reference_pwr):.3n} [$V_{{ADC}}^2$]")
+        self.ref_lvl_text.set_text(f"Noise: {float(ref_pwr_dbfs):.2f} [dbFS]")
         self.suptitle.set_text(
             f"{self.data_path.parent.name}/{self.data_path.name} @ {freqstr}"
         )
