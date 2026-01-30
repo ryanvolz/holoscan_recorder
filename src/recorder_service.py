@@ -287,7 +287,7 @@ async def process_commands(client, service, task_group):
 async def main(service):
     load_configs(service)
     will = aiomqtt.Will(
-        f"{service.name}/status",
+        service.status_topic,
         payload=json.dumps({"state": "offline"}),
         qos=0,
         retain=True,
