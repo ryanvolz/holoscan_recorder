@@ -203,7 +203,15 @@ def build_config_parser():
         "--metadata", type=typing.Optional[dict[str, typing.Any]], default=None
     )
     parser.add_argument("--spectrogram", type=SpectrogramParams)
-    parser.add_argument("--spectrogram_mqtt", type=SpectrogramMQTTParams)
+    parser.add_argument(
+        "--spectrogram_mqtt",
+        type=SpectrogramMQTTParams,
+        default=SpectrogramMQTTParams(
+            service_name="recorder_fft",
+            status_topic="{service_name}/status",
+            data_topic="radiohound/clients/data/{node_id}",
+        ),
+    )
     parser.add_argument("--spectrogram_output", type=SpectrogramOutputParams)
 
     # non-operator arguments that we use from recorder_service
