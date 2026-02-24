@@ -45,16 +45,13 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.DOCKER_REGISTRY }}/${{ matrix.image_name }}
-          labels: |
-            org.opencontainers.image.description=Holoscan MEP recorder
           tags: |
             type=schedule
-            type=ref,event=branch
-            type=ref,event=tag
-            type=ref,event=pr
-            type=match,pattern=(v.*),group=1
-            type=match,pattern=(v\d+.\d+).*,group=1
-            type=match,pattern=(v\d+).*,group=1
+            type=pep440,pattern=v{{version}}
+            type=pep440,pattern=v{{major}}.{{minor}}
+            type=pep440,pattern=v{{major}}
+            type=raw,priority=710,value={{commit_date 'YYYYMMDD-H'}}
+            type=edge
       - name: Build and push Docker image
         id: push
         uses: docker/build-push-action@v6
