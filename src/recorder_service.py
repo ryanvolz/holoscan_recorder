@@ -1,5 +1,7 @@
 import dataclasses
-import json
+import functools
+import logging
+import operator
 import os
 import pathlib
 import shutil
@@ -13,7 +15,31 @@ import aiomqtt
 import anyio
 import exceptiongroup
 import jsonargparse
+import msgspec
 from ruamel.yaml import YAML
+
+logger = logging.getLogger("recorder_service")
+logger.setLevel(os.environ.get("RECORDER_SERVICE_LOG_LEVEL", "INFO"))
+logger.propagate = False
+_console_handler = logging.StreamHandler()
+_console_handler.setLevel(logging.DEBUG)
+logger.addHandler(_console_handler)
+
+
+def deep_update(mapping: dict, *updating_mappings: dict) -> dict:
+    """Update nested dictionary from another nested dictionary"""
+    updated_mapping = mapping.copy()
+    for updating_mapping in updating_mappings:
+        for k, v in updating_mapping.items():
+            if (
+                k in updated_mapping
+                and isinstance(updated_mapping[k], dict)
+                and isinstance(v, dict)
+            ):
+                updated_mapping[k] = deep_update(updated_mapping[k], v)
+            else:
+                updated_mapping[k] = v
+    return updated_mapping
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -59,11 +85,11 @@ def load_configs(service):
     config_paths = sorted(service.config_path.glob("*.yaml"))
     yaml = YAML(typ="safe")
     for p in config_paths:
-        service.loadable_configs[p.stem] = jsonargparse.dict_to_namespace(yaml.load(p))
+        service.loadable_configs[p.stem] = yaml.load(p)
     if service.start_config in service.loadable_configs:
-        service.config = service.loadable_configs[service.start_config]
+        service.cfg = service.loadable_configs[service.start_config]
     else:
-        service.config = list(service.loadable_configs.keys())[0]
+        service.cfg = list(service.loadable_configs.keys())[0]
 
 
 async def send_announce(client, service):
@@ -71,16 +97,55 @@ async def send_announce(client, service):
         "title": "Recorder",
         "description": f"Record data to {str(service.output_path)}",
         "author": "Ryan Volz <rvolz@mit.edu>",
-        "url": "ghcr.io/ryanvolz/holoscan_recorder/mep:latest",
+        "url": "ghcr.io/ryanvolz/holoscan_recorder/mep",
         "source": "https://github.com/ryanvolz/holoscan_recorder",
         "output": {
-            "output_name": {"type": "disk", "value": f"{str(service.output_path)}"},
+            "rf_data": {"type": "disk", "value": f"{str(service.output_path)}"},
+            "status": {
+                "type": "mqtt",
+                "value": f"{service.status_topic}",
+            },
         },
-        "version": "0.2",
+        "version": "0.3",
         "type": "service",
         "time_started": time.time(),
+        "command_topic": f"{service.command_topic}",
+        "commands": {
+            "disable": {
+                "task_name": "disable",
+                "arguments": {},
+            },
+            "enable": {
+                "task_name": "enable",
+                "arguments": {},
+            },
+            "status": {
+                "task_name": "status",
+                "arguments": {},
+            },
+            "config.get": {
+                "task_name": "config.get",
+                "arguments": {"key": "str"},
+            },
+            "config.set": {
+                "task_name": "config.set",
+                "arguments": {"key": "str", "value": "Any"},
+            },
+            "config.list": {
+                "task_name": "config.list",
+                "arguments": {},
+            },
+            "config.load": {
+                "task_name": "config.load",
+                "arguments": {"name": "str"},
+            },
+        },
     }
-    await client.publish(service.announce_topic, json.dumps(payload), retain=True)
+    json_payload = msgspec.json.encode(payload)
+    logger.debug(
+        f"Announcing {service.name} on {service.announce_topic}:\n{json_payload}"
+    )
+    await client.publish(service.announce_topic, json_payload, retain=True)
 
 
 async def send_status(client, service):
@@ -88,28 +153,30 @@ async def send_status(client, service):
         "state": "recording" if service.recording_enabled else "waiting",
         "timestamp": time.time(),
     }
-    await client.publish(service.status_topic, json.dumps(payload), retain=True)
+    json_payload = msgspec.json.encode(payload)
+    logger.debug(
+        f"Sending {service.name} status to {service.status_topic}:\n{json_payload}"
+    )
+    await client.publish(service.status_topic, json_payload, retain=True)
 
 
-async def send_error(client, service, message, response_topic=None):
-    if response_topic is None:
-        response_topic = service.status_topic
-    payload = {
-        "message": message,
-        "timestamp": time.time(),
-    }
-    await client.publish(response_topic, json.dumps(payload))
+async def send_response(client, service, response, command_payload=None):
+    if command_payload is None:
+        command_payload = {}
+    response_topic = command_payload.get("response_topic", service.status_topic)
+    session_id = command_payload.get("session_id", None)
+    task_name = command_payload.get("task_name", None)
 
-
-async def send_config(client, service, value, response_topic=None):
-    if response_topic is None:
-        response_topic = service.status_topic
-
-    payload = {
-        "value": value,
-        "timestamp": time.time(),
-    }
-    await client.publish(response_topic, json.dumps(payload))
+    response.update(
+        session_id=session_id,
+        task_name=task_name,
+        timestamp=time.time(),
+    )
+    json_payload = msgspec.json.encode(response)
+    logger.debug(
+        f"Sending {service.name} response to {response_topic}:\n{json_payload}"
+    )
+    await client.publish(response_topic, json_payload)
 
 
 async def run_drf_mirror(service):
@@ -130,7 +197,7 @@ async def run_drf_ringbuffer(service):
         "-l",
         "1",
         "--status_interval",
-        "10",
+        "31536000",
         str(service.ram_ringbuffer_path),
     ]
     try:
@@ -173,7 +240,7 @@ async def run_recorder(client, service):
         "python3",
         str(service.script_path),
         "--config",
-        json.dumps(service.config.as_dict()),
+        msgspec.json.encode(service.cfg),
         "--ram_ringbuffer_path",
         str(service.ram_ringbuffer_path),
         "--output_path",
@@ -223,62 +290,78 @@ def enable_recording(client, service, task_group):
 async def process_config_command(client, service, payload):
     cmd = payload["task_name"].removeprefix("config.")
     args = payload.get("arguments", {})
-    response_topic = payload.get("response_topic", None)
     try:
         if cmd == "get":
             key = args.get("key", "")
             try:
                 if not key:
-                    value = service.config
+                    value = service.cfg
                 else:
-                    value = service.config[key]
+                    # does service.cfg.{key} where key can have additional dot levels
+                    value = operator.attrgetter(key)(service.cfg)
                 if isinstance(value, jsonargparse.Namespace):
                     value = value.as_dict()
-            except KeyError:
-                msg = f"ERROR config.get: key '{key}' not found."
-                await send_error(client, service, msg, response_topic)
+            except AttributeError:
+                msg = f"Key '{key}' not found."
+                logger.warning(msg)
+                response = {"exception": msg}
+                await send_response(client, service, response, payload)
             else:
-                await send_config(client, service, value, response_topic)
+                logger.debug(f"Got config key {key}: {value}")
+                response = {"value": value}
+                await send_response(client, service, response, payload)
         if cmd == "set":
             key = args.get("key", "")
             val = args["value"]
-            if isinstance(val, dict):
-                val = jsonargparse.dict_to_namespace(val)
-            service.config.update(val, key)
-            await send_config(client, service, service.config.as_dict(), response_topic)
+            if not key:
+                update_dict = val
+            else:
+                update_dict = functools.reduce(
+                    lambda v, k: {k: v}, reversed(key.split(".")), val
+                )
+            updated_cfg = deep_update(service.cfg, update_dict)
+            service.cfg = updated_cfg
+            logger.debug(f"Set config key {key}: {val}")
+            response = {"value": service.cfg}
+            await send_response(client, service, response, payload)
         if cmd == "list":
             available_config_names = sorted(list(service.loadable_configs.keys()))
-            if response_topic is None:
-                response_topic = service.status_topic
-            payload = {
-                "available_configs": available_config_names,
-                "timestamp": time.time(),
-            }
-            await client.publish(response_topic, json.dumps(payload))
+            logger.debug(f"Listing available configs: {available_config_names}")
+            response = {"available_configs": available_config_names}
+            await send_response(client, service, response, payload)
         if cmd == "load":
             config_name = args["name"]
             try:
-                service.config = service.loadable_configs[config_name]
+                service.cfg = service.loadable_configs[config_name]
             except KeyError:
-                msg = f"ERROR config.load: configuration '{config_name}' not found."
-                await send_error(client, service, msg, response_topic)
+                msg = f"Configuration '{config_name}' not found."
+                logger.warning(msg)
+                response = {"exception": msg}
+                await send_response(client, service, response, payload)
             else:
-                await send_config(
-                    client, service, service.config.as_dict(), response_topic
-                )
+                logger.debug(f"Loaded config {config_name}")
+                response = {"value": service.cfg}
+                await send_response(client, service, response, payload)
     except Exception:
-        msg = f"ERROR config:\n{traceback.format_exc()}"
-        await send_error(client, service, msg, response_topic)
+        logger.exception(
+            f"Error processing config payload:\n{msgspec.json.encode(payload)}"
+        )
+        response = {"exception": traceback.format_exc()}
+        await send_response(client, service, response, payload)
 
 
 async def process_commands(client, service, task_group):
+    logger.info(f"Service {service.name} listening for commands")
     async for message in client.messages:
-        payload = json.loads(message.payload.decode())
+        payload = msgspec.json.decode(message.payload)
         if payload["task_name"] == "disable":
+            logger.info("Stopping recording script")
             disable_recording(service)
         if payload["task_name"] == "enable":
+            logger.info("Starting recording script")
             enable_recording(client, service, task_group)
         if payload["task_name"] == "status":
+            logger.info("Processing status command")
             await send_status(client, service)
         if payload["task_name"].startswith("config."):
             await process_config_command(client, service, payload)
@@ -288,7 +371,7 @@ async def main(service):
     load_configs(service)
     will = aiomqtt.Will(
         service.status_topic,
-        payload=json.dumps({"state": "offline"}),
+        payload=msgspec.json.encode({"state": "offline"}),
         qos=0,
         retain=True,
     )
@@ -307,7 +390,7 @@ async def main(service):
                 await send_status(client, service)
                 with exceptiongroup.catch(
                     {
-                        Exception: lambda exc: traceback.print_exc(),
+                        Exception: lambda exc: logger.error("Exception", exc_info=exc),
                     }
                 ):
                     async with anyio.create_task_group() as tg:
@@ -321,11 +404,12 @@ async def main(service):
                 "Connection to MQTT server lost;"
                 f" Reconnecting in {interval} seconds ..."
             )
-            print(msg)
+            logger.warning(msg)
             await anyio.sleep(interval)
 
 
 if __name__ == "__main__":
+    logger.info("Starting recorder_service")
     service = jsonargparse.auto_cli(
         RecorderService, env_prefix="RECORDER", default_env=True
     )
