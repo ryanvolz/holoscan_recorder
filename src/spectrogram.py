@@ -483,18 +483,20 @@ class SpectrogramMQTT(holoscan.core.Operator):
 
         payload = spec_arr.astype("<f4").tobytes(order="C")
 
+        properties_dict = {
+            "shape": spec_arr.shape,
+            "order": "row-major",
+            "dims": ("subch", "freq"),
+            "sample_rate_hz": float(sample_rate_frac),
+            "center_freq_hz": float(rf_metadata.center_freq),
+            "spectrum_rate_hz": float(sample_rate_frac / self.spec_sample_cadence),
+            "timestamp": spec_timestamp_str,
+        }
+
         properties = mqtt.Properties(mqtt.PacketTypes.PUBLISH)
         properties.ContentType = "<float32"
-        properties.UserProperty = ("shape", spec_arr.shape)
-        properties.UserProperty = ("order", "row-major")
-        properties.UserProperty = ("dims", ("subch", "freq"))
-        properties.UserProperty = ("sample_rate_hz", float(sample_rate_frac))
-        properties.UserProperty = ("center_freq_hz", float(rf_metadata.center_freq))
-        properties.UserProperty = (
-            "spectrum_rate_hz",
-            float(sample_rate_frac / self.spec_sample_cadence),
-        )
-        properties.UserProperty = ("timestamp", spec_timestamp_str)
+        for key, val in properties_dict.items():
+            properties.UserProperty = (key, json.dumps(val))
 
         return payload, properties
 
