@@ -269,6 +269,7 @@ def build_config_parser():
             service_name="spectrogram-emvsis",
             status_topic="dt/vsword/{service_name}/{node_id}/status",
             data_topic="dt/vsword/{service_name}/{node_id}/data",
+            payload_format="f32buffer",
         ),
     )
     parser.add_argument(
@@ -278,6 +279,7 @@ def build_config_parser():
             service_name="spectrogram-zephyr",
             status_topic="dt/vsword/{service_name}/{node_id}/status",
             data_topic="dt/vsword/{service_name}/{node_id}/data",
+            payload_format="f32buffer",
         ),
     )
     parser.add_argument(

@@ -287,10 +287,12 @@ class Spectrogram(holoscan.core.Operator):
         )
 
         for spec_count in range(spec.shape[0]):
+            # host_spec is Fortran-contiguous with shape (nfft, num_subchannels)
             host_spec = spec[spec_count, ...].get(
                 out=spec_pinned[..., spec_count], blocking=False
             )
-            yield host_spec
+            # yield so output is C-contiguous with shape (num_subchannels, nfft)
+            yield host_spec.T
 
 
 @dataclasses.dataclass
@@ -317,6 +319,8 @@ class SpectrogramMQTTParams:
     """Network port of the MQTT broker"""
     mqtt_keepalive: int = 60
     """Maximum period in seconds between communications with the MQTT broker"""
+    payload_format: str = "radiohound"
+    """MQTT payload format: 'f32buffer' or 'radiohound'"""
 
 
 class SpectrogramMQTT(holoscan.core.Operator):
@@ -329,6 +333,7 @@ class SpectrogramMQTT(holoscan.core.Operator):
     mqtt_host: str
     mqtt_port: int
     mqtt_keepalive: int
+    payload_format: str
 
     def __init__(
         self,
@@ -343,6 +348,7 @@ class SpectrogramMQTT(holoscan.core.Operator):
         mqtt_host="localhost",
         mqtt_port=1883,
         mqtt_keepalive=60,
+        payload_format="radiohound",
         **kwargs,
     ):
         """Operator that computes spectrograms from RF data.
@@ -377,6 +383,8 @@ class SpectrogramMQTT(holoscan.core.Operator):
             Network port of the MQTT broker
         mqtt_keepalive: int
             Maximum period in seconds between communications with the MQTT broker
+        payload_format: str
+            MQTT payload format: 'f32buffer' or 'radiohound'
         """
         self.spec_sample_cadence = spec_sample_cadence
         self.input_buffer_capacity = input_buffer_capacity
@@ -393,6 +401,12 @@ class SpectrogramMQTT(holoscan.core.Operator):
         self.mqtt_host = mqtt_host
         self.mqtt_port = mqtt_port
         self.mqtt_keepalive = mqtt_keepalive
+        self.payload_format = payload_format
+
+        if self.payload_format == "radiohound":
+            self.make_payload = self._make_payload_radiohound
+        else:
+            self.make_payload = self._make_payload_f32buffer
 
         super().__init__(fragment, *args, **kwargs)
         self.logger = logging.getLogger("holoscan.rf_array.SpectrogramMQTT")
@@ -407,7 +421,10 @@ class SpectrogramMQTT(holoscan.core.Operator):
     def initialize(self):
         self.logger.debug("Initializing spectrogram MQTT output operator")
 
-        self.mqtt_client = mqtt.Client(client_id=self.service_name)
+        client_kwargs = {}
+        if self.payload_format == "f32buffer":
+            client_kwargs["protocol"] = mqtt.MQTTv5
+        self.mqtt_client = mqtt.Client(client_id=self.service_name, **client_kwargs)
         self.mqtt_client.will_set(
             self.status_topic, payload='{"state": "offline"}', qos=0, retain=True
         )
@@ -442,14 +459,51 @@ class SpectrogramMQTT(holoscan.core.Operator):
             spec_message = op_input.receive("spec_in")
 
     def compute_one(self, spec_message):
+        # spec_arr is C-contiguous with shape (num_subchannels, nfft)
         spec_arr = np.from_dlpack(spec_message["spec"])
         rf_metadata = spec_message["metadata"]
 
+        payload, properties = self.make_payload(spec_arr, rf_metadata)
+        try:
+            self.mqtt_client.publish(
+                self.data_topic, payload=payload, properties=properties
+            )
+        except Exception:
+            self.logger.exception("Failed to publish spectrogram payload")
+
+    def _make_payload_f32buffer(self, spec_arr, rf_metadata):
+        sample_rate_frac = fractions.Fraction(
+            rf_metadata.sample_rate_numerator, rf_metadata.sample_rate_denominator
+        )
+        secs, picosecs = timestamp_floor(rf_metadata.sample_idx, sample_rate_frac)
+        spec_timestamp_dt = datetime.datetime.fromtimestamp(
+            secs + 1e-12 * picosecs, datetime.timezone.utc
+        )
+        spec_timestamp_str = spec_timestamp_dt.isoformat()
+
+        payload = spec_arr.astype("<f4").tobytes(order="C")
+
+        properties = mqtt.Properties(mqtt.PacketTypes.PUBLISH)
+        properties.ContentType = "<float32"
+        properties.UserProperty = ("shape", spec_arr.shape)
+        properties.UserProperty = ("order", "row-major")
+        properties.UserProperty = ("dims", ("subch", "freq"))
+        properties.UserProperty = ("sample_rate_hz", float(sample_rate_frac))
+        properties.UserProperty = ("center_freq_hz", float(rf_metadata.center_freq))
+        properties.UserProperty = (
+            "spectrum_rate_hz",
+            float(sample_rate_frac / self.spec_sample_cadence),
+        )
+        properties.UserProperty = ("timestamp", spec_timestamp_str)
+
+        return payload, properties
+
+    def _make_payload_radiohound(self, spec_arr, rf_metadata):
         sample_rate_frac = fractions.Fraction(
             rf_metadata.sample_rate_numerator, rf_metadata.sample_rate_denominator
         )
         spec_freq_idx = np.fft.fftshift(
-            np.fft.fftfreq(spec_arr.shape[0], 1 / sample_rate_frac)
+            np.fft.fftfreq(spec_arr.shape[1], 1 / sample_rate_frac)
         )
         secs, picosecs = timestamp_floor(rf_metadata.sample_idx, sample_rate_frac)
         spec_timestamp_dt = datetime.datetime.fromtimestamp(
@@ -459,9 +513,7 @@ class SpectrogramMQTT(holoscan.core.Operator):
         scan_time = float(self.spec_sample_cadence / sample_rate_frac)
 
         payload = {
-            "data": base64.b64encode(np.squeeze(spec_arr).copy(order="C")).decode(
-                "utf-8"
-            ),
+            "data": base64.b64encode(spec_arr.ravel()).decode("utf-8"),
             "mac_address": self.node_id,
             "type": "float32",
             "short_name": "MEP",
@@ -478,17 +530,15 @@ class SpectrogramMQTT(holoscan.core.Operator):
                 "data_type": "periodogram",
                 "fmin": int(min(spec_freq_idx)),
                 "fmax": int(max(spec_freq_idx)),
-                "nfft": spec_arr.shape[0],
-                "xcount": spec_arr.shape[0],
+                "nfft": spec_arr.shape[1],
+                "xcount": spec_arr.shape[1],
                 "gps_lock": False,
                 "scan_time": scan_time,
                 "archiveResult": False,
             },
         }
-        try:
-            self.mqtt_client.publish(self.data_topic, payload=json.dumps(payload))
-        except Exception:
-            self.logger.exception("Failed to publish spectrogram payload")
+        properties = None
+        return json.dumps(payload), properties
 
     def stop(self):
         self.mqtt_client.disconnect()
@@ -652,10 +702,10 @@ class SpectrogramOutput(holoscan.core.Operator):
             self.spec_freq_idx = None
             self.spec_sample_idx = None
         self.spec_data = np.full(
-            (self.nfft, self.num_subchannels, self.num_spectra_per_output),
+            (self.num_spectra_per_output, self.num_subchannels, self.nfft),
             np.nan,
             dtype=np.float32,
-            order="F",
+            order="C",
         )
 
     def create_spec_figure(self):
@@ -682,7 +732,7 @@ class SpectrogramOutput(holoscan.core.Operator):
             col_idx = sch % self.col_wrap
             ax = axs[row_idx, col_idx]
             img = ax.imshow(
-                self.spec_data[:, sch, :],
+                self.spec_data[:, sch, :].T,
                 cmap=self.cmap,
                 norm=self.norm,
                 aspect="auto",
@@ -734,6 +784,7 @@ class SpectrogramOutput(holoscan.core.Operator):
             spec_message = op_input.receive("spec_in")
 
     def compute_one(self, spec_message):
+        # spec_arr is C-contiguous with shape (num_subchannels, nfft)
         spec_arr = np.from_dlpack(spec_message["spec"])
         rf_metadata = spec_message["metadata"]
 
@@ -781,7 +832,7 @@ class SpectrogramOutput(holoscan.core.Operator):
         )
         # store incoming data
         self.latest_chunk_idx = chunk_idx
-        self.spec_data[..., chunk_idx] = spec_arr
+        self.spec_data[chunk_idx, ...] = spec_arr
 
         # write output if we've filled the storage arrays
         if chunk_idx == (self.num_spectra_per_output - 1):
@@ -808,7 +859,7 @@ class SpectrogramOutput(holoscan.core.Operator):
             + np.asarray(microsecs - microsecs[0], dtype="m8[us]")
         )
 
-        output_spec_data = self.spec_data[..., : (chunk_idx + 1)]
+        output_spec_data = self.spec_data[: (chunk_idx + 1), ...]
         output_sample_idx = self.spec_sample_idx[: (chunk_idx + 1)]
         output_time_idx = time_idx[..., : (chunk_idx + 1)]
 
