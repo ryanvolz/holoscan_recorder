@@ -874,6 +874,8 @@ class SpectrogramOutput(holoscan.core.Operator):
                     [int(output_sample_idx[0])],
                     [
                         {
+                            # Maybe want to swap frequency and time dims in future?
+                            # output dims: (subch, freq, time)
                             "spectrogram": output_spec_data.transpose((1, 2, 0)),
                             "freq_idx": self.spec_freq_idx
                             + self.stored_metadata.center_freq,
