@@ -874,7 +874,7 @@ class SpectrogramOutput(holoscan.core.Operator):
                     [int(output_sample_idx[0])],
                     [
                         {
-                            "spectrogram": output_spec_data.transpose((1, 0, 2)),
+                            "spectrogram": output_spec_data.transpose((1, 2, 0)),
                             "freq_idx": self.spec_freq_idx
                             + self.stored_metadata.center_freq,
                             "sample_idx": output_sample_idx,
@@ -915,7 +915,7 @@ class SpectrogramOutput(holoscan.core.Operator):
         )
         for sch in range(self.num_subchannels):
             self.imgs[sch].set(
-                data=spec_power_dbfs[:, sch, :],
+                data=spec_power_dbfs[:, sch, :].T,
                 extent=extent,
             )
         self.ref_lvl_text.set_text(f"Noise: {float(ref_pwr_dbfs):.2f} [dbFS]")
