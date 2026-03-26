@@ -52,6 +52,7 @@ class RecorderService:
     node_id: Optional[str] = None
     output_path: os.PathLike = "/data/ringbuffer"
     ram_ringbuffer_path: os.PathLike = "."
+    response_topic: str = "{service.name}/response"
     script_path: os.PathLike = "recorder.py"
     start_config: str = "default"
     status_topic: str = "{service.name}/status"
@@ -78,6 +79,7 @@ class RecorderService:
 
         self.announce_topic = self.announce_topic.format(service=self)
         self.command_topic = self.command_topic.format(service=self)
+        self.response_topic = self.response_topic.format(service=self)
         self.status_topic = self.status_topic.format(service=self)
 
 
@@ -110,6 +112,7 @@ async def send_announce(client, service):
         "type": "service",
         "time_started": time.time(),
         "command_topic": f"{service.command_topic}",
+        "default_response_topic": f"{service.response_topic}",
         "commands": {
             "disable": {
                 "task_name": "disable",
@@ -158,12 +161,13 @@ async def send_status(client, service):
         f"Sending {service.name} status to {service.status_topic}:\n{json_payload}"
     )
     await client.publish(service.status_topic, json_payload, retain=True)
+    return payload
 
 
 async def send_response(client, service, response, command_payload=None):
     if command_payload is None:
         command_payload = {}
-    response_topic = command_payload.get("response_topic", service.status_topic)
+    response_topic = command_payload.get("response_topic", service.response_topic)
     session_id = command_payload.get("session_id", None)
     task_name = command_payload.get("task_name", None)
 
@@ -177,6 +181,7 @@ async def send_response(client, service, response, command_payload=None):
         f"Sending {service.name} response to {response_topic}:\n{json_payload}"
     )
     await client.publish(response_topic, json_payload)
+    return response
 
 
 async def run_drf_mirror(service):
@@ -362,7 +367,8 @@ async def process_commands(client, service, task_group):
             enable_recording(client, service, task_group)
         if payload["task_name"] == "status":
             logger.info("Processing status command")
-            await send_status(client, service)
+            status_response = await send_status(client, service)
+            await send_response(client, service, status_response, payload)
         if payload["task_name"].startswith("config."):
             await process_config_command(client, service, payload)
 
