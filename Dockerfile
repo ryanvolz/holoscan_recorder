@@ -18,10 +18,14 @@
 ############################################################
 FROM ghcr.io/ryanvolz/holohub/rf-array:v1.3 AS base
 
-# Set up environment variables
+# Set up environment variables (possibly customized by container user)
 ENV HOLOSCAN_EXECUTOR_LOG_LEVEL=WARN
 ENV HOLOSCAN_LOG_LEVEL=INFO
 ENV HOLOSCAN_LOG_FORMAT=DEFAULT
+
+# Set up environment variables (should not be customized by container user)
+ENV CUPY_CUDA_ARRAY_INTERFACE_SYNC=0
+ENV HOLOSCAN_CUDA_ARRAY_INTERFACE_SYNC=0
 
 # Install any utils needed for execution
 ARG DEBIAN_FRONTEND=noninteractive
