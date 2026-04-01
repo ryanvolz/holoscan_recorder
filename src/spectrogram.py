@@ -16,6 +16,7 @@
 # limitations under the License.
 
 import base64
+import contextlib
 import dataclasses
 import datetime
 import fractions
@@ -41,6 +42,9 @@ from holohub import rf_array
 from jsonargparse.typing import PositiveInt
 
 mpl.use("agg")
+
+# use asynchronous stream ordered memory
+cp.cuda.set_allocator(cp.cuda.MemoryAsyncPool().malloc)
 
 
 def timestamp_floor(nsamples, sample_rate_frac):
@@ -182,6 +186,9 @@ class Spectrogram(holoscan.core.Operator):
         self.num_spectra_per_chunk = num_spectra_per_chunk
         self.spec_sample_cadence = self.chunk_size // self.num_spectra_per_chunk
 
+        # plan will be initialized on first compute(), use null context until then
+        self.cufft_plan = contextlib.nullcontext()
+
         super().__init__(fragment, *args, **kwargs)
         self.logger = logging.getLogger("holoscan.rf_array.Spectrogram")
 
@@ -195,18 +202,6 @@ class Spectrogram(holoscan.core.Operator):
 
     def initialize(self):
         self.logger.debug("Initializing spectrogram operator")
-
-        # warm up CUDA calculation and extract an FFT plan
-        for _host_spec in self.calc_spectrogram_chunk(
-            cp.ones((self.chunk_size, self.num_subchannels), dtype="complex64"),
-        ):
-            pass
-        plan_cache = cp.fft.config.get_plan_cache()
-        # most recently used plan is the first in the cache when iterating,
-        # which is the one we want to save for re-use with this operator
-        for key, node in plan_cache:
-            self.cufft_plan = node.plan
-            break
 
     def compute(
         self,
@@ -225,74 +220,83 @@ class Spectrogram(holoscan.core.Operator):
 
             with cp.cuda.ExternalStream(stream_ptr):
                 rf_data = cp.from_dlpack(rf_arr.data)
-                with self.cufft_plan:
-                    for spec_count, host_spec in enumerate(
-                        self.calc_spectrogram_chunk(rf_data)
-                    ):
-                        sample_idx = (
-                            rf_metadata.sample_idx
-                            + spec_count * self.spec_sample_cadence
-                        )
-                        spec_metadata = rf_array.RFMetadata(
-                            sample_idx,
-                            rf_metadata.sample_rate_numerator,
-                            rf_metadata.sample_rate_denominator,
-                            rf_metadata.center_freq,
-                        )
-                        out_message = {
-                            # cast to Holoscan Tensor so it is passed without data copy
-                            # allowing emit before the stream is synced
-                            "spec": holoscan.as_tensor(host_spec),
-                            "metadata": spec_metadata,
-                        }
-                        op_output.emit(out_message, "spec_out")
+                for spec_count, host_spec in enumerate(
+                    self.calc_spectrogram_chunk(rf_data)
+                ):
+                    sample_idx = (
+                        rf_metadata.sample_idx + spec_count * self.spec_sample_cadence
+                    )
+                    spec_metadata = rf_array.RFMetadata(
+                        sample_idx,
+                        rf_metadata.sample_rate_numerator,
+                        rf_metadata.sample_rate_denominator,
+                        rf_metadata.center_freq,
+                    )
+                    out_message = {
+                        # cast to Holoscan Tensor so it is passed without data copy
+                        # allowing emit before the stream is synced
+                        "spec": holoscan.as_tensor(host_spec),
+                        "metadata": spec_metadata,
+                    }
+                    op_output.emit(out_message, "spec_out")
             # try to receive again to either get another message or exit the while loop
             rf_arr = op_input.receive("rf_in")
 
     def calc_spectrogram_chunk(self, rf_data):
         # get pinned host memory for output so copy can run asynchronously
-        # (Fortran contiguous because we will want to output/plot separately by
-        #  subchannel and this keeps each subchannel contiguous)
         spec_pinned = cupyx.empty_pinned(
-            (self.nfft, self.num_subchannels, self.num_spectra_per_chunk),
+            (self.num_spectra_per_chunk, self.num_subchannels, self.nfft),
             dtype="float32",
-            order="F",
+            order="C",
         )
         spec_pinned[...] = np.nan
 
+        # break rf_data into chunks and transpose so we have shape
+        # (num_spectra_per_chunk, num_subchannels, chunk_size // num_spectra_per_chunk)
+        # and can take FFT over the last axis
         spectrum_chunks = rf_data.reshape(
             (
                 self.num_spectra_per_chunk,
                 self.chunk_size // self.num_spectra_per_chunk,
                 self.num_subchannels,
             )
-        )
-        _freqs, _sidxs, Zxx = cpss.stft(
-            spectrum_chunks,
-            fs=1,
-            window=self.window,
-            nperseg=self.nperseg,
-            noverlap=self.noverlap,
-            nfft=self.nfft,
-            detrend=self.detrend,
-            return_onesided=False,
-            boundary=None,
-            padded=False,
-            axis=1,
-            scaling="spectrum",
-        )
-        # reduce over time (last) axis
+        ).transpose((0, 2, 1))
+        with self.cufft_plan as plan:
+            _freqs, _sidxs, Zxx = cpss.stft(
+                spectrum_chunks,
+                fs=1,
+                window=self.window,
+                nperseg=self.nperseg,
+                noverlap=self.noverlap,
+                nfft=self.nfft,
+                detrend=self.detrend,
+                return_onesided=False,
+                boundary=None,
+                padded=False,
+                axis=-1,
+                scaling="spectrum",
+            )
+            # extract FFT plan for next time if we didn't have one this time
+            # (plan cache never hits otherwise, and a new plan would always be created)
+            if plan is None:
+                plan_cache = cp.fft.config.get_plan_cache()
+                # most recently used plan is the first in the cache when iterating,
+                # which is the one we want to save for re-use with this operator
+                for key, node in plan_cache:
+                    self.cufft_plan = node.plan
+                    break
+        # Zxx shape is (num_spectra_per_chunk, num_subchannels, nfft, ntime)
+        # reduce over time (last) axis, fftshift freq (last after reduction) axis
         spec = cp.fft.fftshift(
-            self.reduce_op(Zxx.real**2 + Zxx.imag**2, axis=-1), axes=1
+            self.reduce_op(Zxx.real**2 + Zxx.imag**2, axis=-1), axes=-1
         )
 
-        for spec_count in range(spec.shape[0]):
-            # host_spec is Fortran-contiguous with shape (nfft, num_subchannels)
-            host_spec = spec[spec_count, ...].get(
-                out=spec_pinned[..., spec_count], blocking=False
-            )
-            # yield so output is C-contiguous with shape (num_subchannels, nfft)
-            yield host_spec.T
+        # copy result into (host-pinned) numpy array
+        host_spec = spec.get(out=spec_pinned, blocking=False)
+
+        for spec_count in range(host_spec.shape[0]):
+            # output is C-contiguous with shape (num_subchannels, nfft)
+            yield host_spec[spec_count, ...]
 
 
 @dataclasses.dataclass
