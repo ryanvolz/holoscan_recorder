@@ -203,6 +203,14 @@ class Spectrogram(holoscan.core.Operator):
     def initialize(self):
         self.logger.debug("Initializing spectrogram operator")
 
+        # warm up CUDA calculation to force one-time overheads into init
+        # so we don't spend an extra long time in the first compute call
+        # and delay other operators
+        for _host_spec in self.calc_spectrogram_chunk(
+            cp.ones((self.chunk_size, self.num_subchannels), dtype="complex64"),
+        ):
+            pass
+
     def compute(
         self,
         op_input: holoscan.core.InputContext,
