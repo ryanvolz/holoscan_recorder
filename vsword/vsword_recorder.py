@@ -314,6 +314,26 @@ def build_config_parser():
     return parser
 
 
+class AdvNetworkInitOp(holoscan.core.Operator):
+    def __init__(self, fragment, *args, **kwargs):
+        super().__init__(fragment, *args, **kwargs)
+        self.logger = logging.getLogger("holoscan.vsword_recorder.AdvNetworkInitOp")
+
+    def setup(self, spec: holoscan.core.OperatorSpec):
+        pass
+
+    def compute(self, op_input, op_output, context):
+        advanced_network_common.adv_net_init(
+            self.fragment.from_config("advanced_network")
+        )
+
+    def stop(self):
+        try:
+            advanced_network_common.shutdown()
+        except Exception:
+            self.logger.exception("Exception during shutdown!")
+
+
 class App(holoscan.core.Application):
     def compose(self):
         cuda_stream_pool = holoscan.resources.CudaStreamPool(
@@ -325,7 +345,11 @@ class App(holoscan.core.Application):
             max_size=0,
         )
 
-        advanced_network_common.adv_net_init(self.from_config("advanced_network"))
+        advanced_network_init_op = AdvNetworkInitOp(
+            self,
+            holoscan.conditions.CountCondition(self, count=1),
+            name="advanced_network_init_op",
+        )
 
         # sample flow 0
 
@@ -341,6 +365,9 @@ class App(holoscan.core.Application):
             capacity=packet0_kwargs.get("buffer_size", 4),
             policy=0,  # pop
         )
+        self.add_flow(advanced_network_init_op, net_connector_rx0)
+        # loopback because advanced_network_init_op happens once, need to trigger self
+        self.add_flow(net_connector_rx0, net_connector_rx0)
 
         last_chunk_shape = (
             self.kwargs("packet0")["num_samples"],
@@ -358,7 +385,7 @@ class App(holoscan.core.Application):
                 capacity=last_buffer_capacity,
                 policy=0,  # pop
             )
-            self.add_flow(last_op, selector0)
+            self.add_flow(last_op, selector0, {("rf_out", "rf_in")})
             last_op = selector0
             last_buffer_capacity = 1
             last_chunk_shape = (
@@ -377,7 +404,7 @@ class App(holoscan.core.Application):
                 capacity=last_buffer_capacity,
                 policy=0,  # pop
             )
-            self.add_flow(last_op, converter0)
+            self.add_flow(last_op, converter0, {("rf_out", "rf_in")})
             last_op = converter0
             last_buffer_capacity = 1
 
@@ -487,7 +514,7 @@ class App(holoscan.core.Application):
                     capacity=25,
                     policy=0,  # pop
                 )
-                self.add_flow(last_op, drf_sink0)
+                self.add_flow(last_op, drf_sink0, {("rf_out", "rf_in")})
             else:
                 drf_sink0 = rf_array.DigitalRFSink_sc16(
                     self,
@@ -500,7 +527,7 @@ class App(holoscan.core.Application):
                     capacity=25,
                     policy=0,  # pop
                 )
-                self.add_flow(last_op, drf_sink0)
+                self.add_flow(last_op, drf_sink0, {("rf_out", "rf_in")})
 
             if self.kwargs("pipeline")["metadata0"]:
                 dmd_sink0 = DigitalMetadataSink(
@@ -536,6 +563,9 @@ class App(holoscan.core.Application):
             capacity=packet1_kwargs.get("buffer_size", 4),
             policy=0,  # pop
         )
+        self.add_flow(advanced_network_init_op, net_connector_rx1)
+        # loopback because advanced_network_init_op happens once, need to trigger self
+        self.add_flow(net_connector_rx1, net_connector_rx1)
 
         last_chunk_shape = (
             self.kwargs("packet1")["num_samples"],
@@ -553,7 +583,7 @@ class App(holoscan.core.Application):
                 capacity=last_buffer_capacity,
                 policy=0,  # pop
             )
-            self.add_flow(last_op, selector1)
+            self.add_flow(last_op, selector1, {("rf_out", "rf_in")})
             last_op = selector1
             last_buffer_capacity = 1
             last_chunk_shape = (
@@ -572,7 +602,7 @@ class App(holoscan.core.Application):
                 capacity=last_buffer_capacity,
                 policy=0,  # pop
             )
-            self.add_flow(last_op, converter1)
+            self.add_flow(last_op, converter1, {("rf_out", "rf_in")})
             last_op = converter1
             last_buffer_capacity = 1
 
@@ -682,7 +712,7 @@ class App(holoscan.core.Application):
                     capacity=25,
                     policy=0,  # pop
                 )
-                self.add_flow(last_op, drf_sink1)
+                self.add_flow(last_op, drf_sink1, {("rf_out", "rf_in")})
             else:
                 drf_sink1 = rf_array.DigitalRFSink_sc16(
                     self,
@@ -695,7 +725,7 @@ class App(holoscan.core.Application):
                     capacity=25,
                     policy=0,  # pop
                 )
-                self.add_flow(last_op, drf_sink1)
+                self.add_flow(last_op, drf_sink1, {("rf_out", "rf_in")})
 
             if self.kwargs("pipeline")["metadata1"]:
                 dmd_sink1 = DigitalMetadataSink(
@@ -716,14 +746,6 @@ class App(holoscan.core.Application):
                     policy=0,  # pop
                 )
                 self.add_flow(last_op, dmd_sink1)
-
-    def cleanup(self):
-        # This is not a Holoscan method!
-        # We use it to contain code for shutting down the advanced network operator
-        try:
-            advanced_network_common.shutdown()
-        except Exception:
-            self.logger.exception("Exception during shutdown!")
 
 
 def main():
@@ -772,7 +794,6 @@ def main():
         app.run()
     except KeyboardInterrupt:
         # catch keyboard interrupt and simply exit
-        app.cleanup()
         tmp_config_dir.cleanup()
         logger.info("Done")
         sys.stdout.flush()
@@ -781,15 +802,12 @@ def main():
         # (which would result in a segfault from double free)
         os._exit(0)
     except SystemExit as e:
-        # nothing cleans up the advanced network operator, so we do it here
-        app.cleanup()
         tmp_config_dir.cleanup()
         # Holoscan graph execution framework handles all cleanup
         # so we just need to exit immediately without further Python cleanup
         # (which would result in a segfault from double free)
         os._exit(e.code)
     else:
-        app.cleanup()
         tmp_config_dir.cleanup()
 
 
