@@ -50,7 +50,7 @@ jobs:
             type=pep440,pattern=v{{version}}
             type=pep440,pattern=v{{major}}.{{minor}}
             type=pep440,pattern=v{{major}}
-            type=raw,priority=710,value={{commit_date 'YYYYMMDD-H'}}
+            type=raw,priority=710,value={{date 'YYYYMMDD-HHmm'}}
             type=edge
       - name: Build and push Docker image
         id: push
