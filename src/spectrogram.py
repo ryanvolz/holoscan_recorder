@@ -860,7 +860,7 @@ class SpectrogramOutput(holoscan.core.Operator):
             self.reset_stored_data()
 
     def write_output(self):
-        if self.stored_metadata is None:
+        if self.stored_metadata is None or self.dmd_writer is None:
             return
         chunk_idx = self.latest_chunk_idx
         sample_idx = self.spec_sample_idx[chunk_idx]
