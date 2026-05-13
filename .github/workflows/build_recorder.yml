@@ -25,9 +25,11 @@ jobs:
         include:
           - name: MEP
             image_name: ${{ github.repository }}/mep
+            base_image: ghcr.io/ryanvolz/holohub/rf-array:v1.3
             target: mep
           - name: VSWORD
             image_name: ${{ github.repository }}/vsword
+            base_image: ghcr.io/ryanvolz/holohub/rf-array:v1.3
             target: vsword
     permissions:
       contents: read
@@ -62,6 +64,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BASE_IMAGE=${{ matrix.base_image }}
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v4
         with:

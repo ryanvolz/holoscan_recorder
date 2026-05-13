@@ -153,6 +153,7 @@ async def send_announce(client, service):
 
 async def send_status(client, service):
     payload = {
+        "output_path": f"{str(service.output_path)}",
         "state": "recording" if service.recording_enabled else "waiting",
         "timestamp": time.time(),
     }

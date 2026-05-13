@@ -16,7 +16,8 @@
 ############################################################
 # Base image
 ############################################################
-FROM ghcr.io/ryanvolz/holohub/rf-array:v1.3 AS base
+ARG BASE_IMAGE=ghcr.io/ryanvolz/holohub/rf-array-cuda-12-6:edge
+FROM ${BASE_IMAGE} AS base
 
 # Set up environment variables (possibly customized by container user)
 ENV HOLOSCAN_EXECUTOR_LOG_LEVEL=WARN
