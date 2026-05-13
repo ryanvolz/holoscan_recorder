@@ -27,7 +27,11 @@ import pathlib
 import socket
 import traceback
 import typing
+import warnings
 
+warnings.simplefilter(action="ignore", category=FutureWarning)
+
+# ruff: disable[E402]
 import cupy as cp
 import cupyx
 import cupyx.scipy.signal as cpss
@@ -40,6 +44,8 @@ import numpy as np
 import paho.mqtt.client as mqtt
 from holohub import rf_array
 from jsonargparse.typing import PositiveInt
+
+# ruff: enable[E402]
 
 mpl.use("agg")
 
@@ -854,7 +860,7 @@ class SpectrogramOutput(holoscan.core.Operator):
             self.reset_stored_data()
 
     def write_output(self):
-        if self.stored_metadata is None:
+        if self.stored_metadata is None or self.dmd_writer is None:
             return
         chunk_idx = self.latest_chunk_idx
         sample_idx = self.spec_sample_idx[chunk_idx]
