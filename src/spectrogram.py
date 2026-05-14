@@ -233,7 +233,12 @@ class Spectrogram(holoscan.core.Operator):
             self.logger.debug(msg)
 
             with cp.cuda.ExternalStream(stream_ptr):
-                rf_data = cp.from_dlpack(rf_arr.data)
+                try:
+                    rf_data = cp.from_dlpack(rf_arr.data)
+                except Exception:
+                    msg = "Failed to convert data to CuPy array, skipping"
+                    self.logger.exception(msg)
+                    return
                 for spec_count, host_spec in enumerate(
                     self.calc_spectrogram_chunk(rf_data)
                 ):
@@ -478,7 +483,11 @@ class SpectrogramMQTT(holoscan.core.Operator):
 
     def compute_one(self, spec_message):
         # spec_arr is C-contiguous with shape (num_subchannels, nfft)
-        spec_arr = np.from_dlpack(spec_message["spec"])
+        try:
+            spec_arr = np.from_dlpack(spec_message["spec"])
+        except Exception:
+            self.logger.exception("Failed to convert data to numpy array, skipping")
+            return
         rf_metadata = spec_message["metadata"]
 
         payload, properties = self.make_payload(spec_arr, rf_metadata)
@@ -805,7 +814,11 @@ class SpectrogramOutput(holoscan.core.Operator):
 
     def compute_one(self, spec_message):
         # spec_arr is C-contiguous with shape (num_subchannels, nfft)
-        spec_arr = np.from_dlpack(spec_message["spec"])
+        try:
+            spec_arr = np.from_dlpack(spec_message["spec"])
+        except Exception:
+            self.logger.exception("Failed to convert data to numpy array, skipping")
+            return
         rf_metadata = spec_message["metadata"]
 
         # reset stored data with new metadata if uninitialized
