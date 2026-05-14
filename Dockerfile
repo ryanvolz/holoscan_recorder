@@ -59,14 +59,13 @@ RUN setcap cap_sys_nice+ep $(realpath $(which python3))
 
 # Copy scripts specific to this image
 COPY --chmod=777 mep/mep_recorder.py /app/mep_recorder.py
-COPY --chmod=777 mep/configs /config
 
 # Set up environment variable defaults for this image
 ENV RECORDER_CONFIG_PATH=/config
 ENV RECORDER_OUTPUT_PATH=/data/ringbuffer
 ENV RECORDER_RAM_RINGBUFFER_PATH=/ramdisk
 ENV RECORDER_SCRIPT_PATH=/app/mep_recorder.py
-ENV RECORDER_START_CONFIG=sr1MHz
+ENV RECORDER_START_CONFIG=default
 ENV RECORDER_TMP_RINGBUFFER_PATH=/data/tmp-ringbuffer
 
 ENV HOME=/ramdisk
