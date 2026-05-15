@@ -374,9 +374,12 @@ class App(holoscan.core.Application):
             name="net_connector_rx0",
             **packet0_kwargs,
         )
-        net_connector_rx0.spec.outputs["rf_out"].connector(
+        net_connector_rx0.spec.outputs["rf_out"].condition(
+            holoscan.core.ConditionType.DOWNSTREAM_MESSAGE_AFFORDABLE,
+            min_size=packet0_kwargs.get("buffer_size", 4),
+        ).connector(
             holoscan.core.IOSpec.ConnectorType.DOUBLE_BUFFER,
-            capacity=packet0_kwargs.get("buffer_size", 4),
+            capacity=2 * packet0_kwargs.get("buffer_size", 4),
             policy=0,  # pop
         )
         network_thread_pool.add_realtime(
@@ -393,7 +396,7 @@ class App(holoscan.core.Application):
             self.kwargs("packet0")["num_samples"],
             self.kwargs("packet0")["num_subchannels"],
         )
-        last_buffer_capacity = packet0_kwargs.get("buffer_size", 4)
+        last_buffer_capacity = 2 * packet0_kwargs.get("buffer_size", 4)
         last_op = net_connector_rx0
 
         if self.kwargs("pipeline")["selector0"]:
@@ -583,9 +586,12 @@ class App(holoscan.core.Application):
             name="net_connector_rx1",
             **packet1_kwargs,
         )
-        net_connector_rx1.spec.outputs["rf_out"].connector(
+        net_connector_rx1.spec.outputs["rf_out"].condition(
+            holoscan.core.ConditionType.DOWNSTREAM_MESSAGE_AFFORDABLE,
+            min_size=packet1_kwargs.get("buffer_size", 4),
+        ).connector(
             holoscan.core.IOSpec.ConnectorType.DOUBLE_BUFFER,
-            capacity=packet1_kwargs.get("buffer_size", 4),
+            capacity=2 * packet1_kwargs.get("buffer_size", 4),
             policy=0,  # pop
         )
         network_thread_pool.add_realtime(
@@ -602,7 +608,7 @@ class App(holoscan.core.Application):
             self.kwargs("packet1")["num_samples"],
             self.kwargs("packet1")["num_subchannels"],
         )
-        last_buffer_capacity = packet1_kwargs.get("buffer_size", 4)
+        last_buffer_capacity = 2 * packet1_kwargs.get("buffer_size", 4)
         last_op = net_connector_rx1
 
         if self.kwargs("pipeline")["selector1"]:
