@@ -239,9 +239,23 @@ class App(holoscan.core.Application):
             reserved_size=1,
             max_size=0,
         )
+        priority_stream_pool = holoscan.resources.CudaStreamPool(
+            self,
+            name="priority_stream_pool",
+            stream_flags=1,  # cudaStreamNonBlocking
+            stream_priority=-2,  # lower means higher priority
+            reserved_size=1,
+            max_size=0,
+        )
+        network_thread_pool = self.make_thread_pool("network_thread_pool", 2)
 
         basic_net_rx = basic_network.BasicNetworkOpRx(
             self,
+            holoscan.conditions.PeriodicCondition(
+                self,
+                recess_period=10000000,
+                policy=holoscan.conditions.PeriodicConditionPolicy.NO_CATCH_UP_MISSED_TICKS,
+            ),
             name="basic_network_rx",
             **self.kwargs("basic_network"),
         )
@@ -250,11 +264,24 @@ class App(holoscan.core.Application):
             capacity=self.kwargs("packet").get("batch_capacity", 4),
             policy=0,  # pop
         )
+        network_thread_pool.add_realtime(
+            basic_net_rx,
+            sched_policy=holoscan.resources.SchedulingPolicy.SCHED_DEADLINE,
+            pin_operator=True,
+            sched_runtime=100000,
+            sched_deadline=200000,
+            sched_period=200000,
+        )
 
         packet_kwargs = self.kwargs("packet")
         net_connector_rx = rf_array.NetConnectorBasic(
             self,
-            cuda_stream_pool,
+            holoscan.conditions.PeriodicCondition(
+                self,
+                recess_period=10000000,
+                policy=holoscan.conditions.PeriodicConditionPolicy.NO_CATCH_UP_MISSED_TICKS,
+            ),
+            priority_stream_pool,
             name="net_connector_rx",
             **packet_kwargs,
         )
@@ -263,10 +290,19 @@ class App(holoscan.core.Application):
             capacity=packet_kwargs.get("batch_capacity", 4),
             policy=0,  # pop
         )
-        net_connector_rx.spec.outputs["rf_out"].connector(
+        net_connector_rx.spec.outputs["rf_out"].condition(
+            holoscan.core.ConditionType.DOWNSTREAM_MESSAGE_AFFORDABLE,
+            min_size=packet_kwargs.get("buffer_size", 4),
+        ).connector(
             holoscan.core.IOSpec.ConnectorType.DOUBLE_BUFFER,
-            capacity=packet_kwargs.get("buffer_size", 4),
+            capacity=2 * packet_kwargs.get("buffer_size", 4),
             policy=0,  # pop
+        )
+        network_thread_pool.add_realtime(
+            net_connector_rx,
+            sched_policy=holoscan.resources.SchedulingPolicy.SCHED_RR,
+            pin_operator=True,
+            sched_priority=10,
         )
         self.add_flow(basic_net_rx, net_connector_rx, {("burst_out", "burst_in")})
 
@@ -274,7 +310,7 @@ class App(holoscan.core.Application):
             self.kwargs("packet")["num_samples"],
             self.kwargs("packet")["num_subchannels"],
         )
-        last_buffer_capacity = packet_kwargs.get("buffer_size", 4)
+        last_buffer_capacity = 2 * packet_kwargs.get("buffer_size", 4)
         last_op = net_connector_rx
 
         if self.kwargs("pipeline")["selector"]:

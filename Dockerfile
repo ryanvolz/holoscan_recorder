@@ -54,16 +54,18 @@ COPY --chmod=775 src/spectrogram.py /app/spectrogram.py
 FROM base AS mep
 LABEL org.opencontainers.image.description="Holoscan MEP recorder"
 
+# Set capabilities on python binary needed by the recorder script for realtime
+RUN setcap cap_sys_nice+ep $(realpath $(which python3))
+
 # Copy scripts specific to this image
 COPY --chmod=777 mep/mep_recorder.py /app/mep_recorder.py
-COPY --chmod=777 mep/configs /config
 
 # Set up environment variable defaults for this image
 ENV RECORDER_CONFIG_PATH=/config
 ENV RECORDER_OUTPUT_PATH=/data/ringbuffer
 ENV RECORDER_RAM_RINGBUFFER_PATH=/ramdisk
 ENV RECORDER_SCRIPT_PATH=/app/mep_recorder.py
-ENV RECORDER_START_CONFIG=sr1MHz
+ENV RECORDER_START_CONFIG=default
 ENV RECORDER_TMP_RINGBUFFER_PATH=/data/tmp-ringbuffer
 
 ENV HOME=/ramdisk
@@ -76,9 +78,10 @@ ENTRYPOINT ["python3", "/app/recorder_service.py"]
 FROM base AS vsword
 LABEL org.opencontainers.image.description="Holoscan VSWORD recorder"
 
-# Set capabilities on python binary needed by DPDK used by the recorder script
+# Set capabilities on python binary needed by the recorder script for realtime
+# and DPDK:
 # (https://doc.dpdk.org/guides-24.11/platform/mlx5.html, running as non-root)
-RUN setcap cap_net_admin,cap_net_raw,cap_dac_override,cap_dac_read_search,cap_ipc_lock,cap_sys_admin,cap_sys_rawio+ep $(realpath $(which python3))
+RUN setcap cap_net_admin,cap_net_raw,cap_dac_override,cap_dac_read_search,cap_ipc_lock,cap_sys_admin,cap_sys_nice,cap_sys_rawio+ep $(realpath $(which python3))
 
 # Copy scripts specific to this image
 COPY --chmod=777 vsword/vsword_recorder.py /app/vsword_recorder.py

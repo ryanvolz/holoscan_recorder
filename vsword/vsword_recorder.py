@@ -344,6 +344,15 @@ class App(holoscan.core.Application):
             reserved_size=1,
             max_size=0,
         )
+        priority_stream_pool = holoscan.resources.CudaStreamPool(
+            self,
+            name="priority_stream_pool",
+            stream_flags=1,  # cudaStreamNonBlocking
+            stream_priority=-2,  # lower means higher priority
+            reserved_size=1,
+            max_size=0,
+        )
+        network_thread_pool = self.make_thread_pool("network_thread_pool", 2)
 
         advanced_network_init_op = AdvNetworkInitOp(
             self,
@@ -356,14 +365,28 @@ class App(holoscan.core.Application):
         packet0_kwargs = self.kwargs("packet0")
         net_connector_rx0 = rf_array.NetConnectorAdvanced(
             self,
-            cuda_stream_pool,
+            holoscan.conditions.PeriodicCondition(
+                self,
+                recess_period=10000000,
+                policy=holoscan.conditions.PeriodicConditionPolicy.NO_CATCH_UP_MISSED_TICKS,
+            ),
+            priority_stream_pool,
             name="net_connector_rx0",
             **packet0_kwargs,
         )
-        net_connector_rx0.spec.outputs["rf_out"].connector(
+        net_connector_rx0.spec.outputs["rf_out"].condition(
+            holoscan.core.ConditionType.DOWNSTREAM_MESSAGE_AFFORDABLE,
+            min_size=packet0_kwargs.get("buffer_size", 4),
+        ).connector(
             holoscan.core.IOSpec.ConnectorType.DOUBLE_BUFFER,
-            capacity=packet0_kwargs.get("buffer_size", 4),
+            capacity=2 * packet0_kwargs.get("buffer_size", 4),
             policy=0,  # pop
+        )
+        network_thread_pool.add_realtime(
+            net_connector_rx0,
+            sched_policy=holoscan.resources.SchedulingPolicy.SCHED_RR,
+            pin_operator=True,
+            sched_priority=10,
         )
         self.add_flow(advanced_network_init_op, net_connector_rx0)
         # loopback because advanced_network_init_op happens once, need to trigger self
@@ -373,7 +396,7 @@ class App(holoscan.core.Application):
             self.kwargs("packet0")["num_samples"],
             self.kwargs("packet0")["num_subchannels"],
         )
-        last_buffer_capacity = packet0_kwargs.get("buffer_size", 4)
+        last_buffer_capacity = 2 * packet0_kwargs.get("buffer_size", 4)
         last_op = net_connector_rx0
 
         if self.kwargs("pipeline")["selector0"]:
@@ -554,14 +577,28 @@ class App(holoscan.core.Application):
         packet1_kwargs = self.kwargs("packet1")
         net_connector_rx1 = rf_array.NetConnectorAdvanced(
             self,
-            cuda_stream_pool,
+            holoscan.conditions.PeriodicCondition(
+                self,
+                recess_period=10000000,
+                policy=holoscan.conditions.PeriodicConditionPolicy.NO_CATCH_UP_MISSED_TICKS,
+            ),
+            priority_stream_pool,
             name="net_connector_rx1",
             **packet1_kwargs,
         )
-        net_connector_rx1.spec.outputs["rf_out"].connector(
+        net_connector_rx1.spec.outputs["rf_out"].condition(
+            holoscan.core.ConditionType.DOWNSTREAM_MESSAGE_AFFORDABLE,
+            min_size=packet1_kwargs.get("buffer_size", 4),
+        ).connector(
             holoscan.core.IOSpec.ConnectorType.DOUBLE_BUFFER,
-            capacity=packet1_kwargs.get("buffer_size", 4),
+            capacity=2 * packet1_kwargs.get("buffer_size", 4),
             policy=0,  # pop
+        )
+        network_thread_pool.add_realtime(
+            net_connector_rx1,
+            sched_policy=holoscan.resources.SchedulingPolicy.SCHED_RR,
+            pin_operator=True,
+            sched_priority=10,
         )
         self.add_flow(advanced_network_init_op, net_connector_rx1)
         # loopback because advanced_network_init_op happens once, need to trigger self
@@ -571,7 +608,7 @@ class App(holoscan.core.Application):
             self.kwargs("packet1")["num_samples"],
             self.kwargs("packet1")["num_subchannels"],
         )
-        last_buffer_capacity = packet1_kwargs.get("buffer_size", 4)
+        last_buffer_capacity = 2 * packet1_kwargs.get("buffer_size", 4)
         last_op = net_connector_rx1
 
         if self.kwargs("pipeline")["selector1"]:

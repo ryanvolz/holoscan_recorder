@@ -25,11 +25,11 @@ jobs:
         include:
           - name: MEP
             image_name: ${{ github.repository }}/mep
-            base_image: ghcr.io/ryanvolz/holohub/rf-array:v1.3
+            base_image: ghcr.io/ryanvolz/holohub/rf-array-cuda-12-6:v1.4
             target: mep
           - name: VSWORD
             image_name: ${{ github.repository }}/vsword
-            base_image: ghcr.io/ryanvolz/holohub/rf-array:v1.3
+            base_image: ghcr.io/ryanvolz/holohub/rf-array-cuda-12-2:v1.4
             target: vsword
     permissions:
       contents: read
