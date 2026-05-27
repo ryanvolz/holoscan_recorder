@@ -352,7 +352,8 @@ class App(holoscan.core.Application):
             reserved_size=1,
             max_size=0,
         )
-        network_thread_pool = self.make_thread_pool("network_thread_pool", 2)
+        # Holoscan 3.2 doesn't support add_realtime() for thread pool, so skip for now
+        # network_thread_pool = self.make_thread_pool("network_thread_pool", 2)
 
         advanced_network_init_op = AdvNetworkInitOp(
             self,
@@ -382,12 +383,13 @@ class App(holoscan.core.Application):
             capacity=2 * packet0_kwargs.get("buffer_size", 4),
             policy=0,  # pop
         )
-        network_thread_pool.add_realtime(
-            net_connector_rx0,
-            sched_policy=holoscan.resources.SchedulingPolicy.SCHED_RR,
-            pin_operator=True,
-            sched_priority=10,
-        )
+        # Holoscan 3.2 doesn't support add_realtime() for thread pool, so skip for now
+        # network_thread_pool.add_realtime(
+        #     net_connector_rx0,
+        #     sched_policy=holoscan.resources.SchedulingPolicy.SCHED_RR,
+        #     pin_operator=True,
+        #     sched_priority=10,
+        # )
         self.add_flow(advanced_network_init_op, net_connector_rx0)
         # loopback because advanced_network_init_op happens once, need to trigger self
         self.add_flow(net_connector_rx0, net_connector_rx0)
@@ -594,12 +596,13 @@ class App(holoscan.core.Application):
             capacity=2 * packet1_kwargs.get("buffer_size", 4),
             policy=0,  # pop
         )
-        network_thread_pool.add_realtime(
-            net_connector_rx1,
-            sched_policy=holoscan.resources.SchedulingPolicy.SCHED_RR,
-            pin_operator=True,
-            sched_priority=10,
-        )
+        # Holoscan 3.2 doesn't support add_realtime() for thread pool, so skip for now
+        # network_thread_pool.add_realtime(
+        #     net_connector_rx1,
+        #     sched_policy=holoscan.resources.SchedulingPolicy.SCHED_RR,
+        #     pin_operator=True,
+        #     sched_priority=10,
+        # )
         self.add_flow(advanced_network_init_op, net_connector_rx1)
         # loopback because advanced_network_init_op happens once, need to trigger self
         self.add_flow(net_connector_rx1, net_connector_rx1)
