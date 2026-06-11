@@ -470,15 +470,6 @@ class App(holoscan.core.Application):
                     )
                     self.add_flow(spectrogram, spectrogram_output)
 
-            if self.kwargs("pipeline")["int_converter"]:
-                int_converter = rf_array.TypeConversionComplexFloatToInt(
-                    self,
-                    cuda_stream_pool,
-                    name="int_converter",
-                )
-                self.add_flow(last_op, int_converter)
-                last_op = int_converter
-
         if self.kwargs("pipeline")["digital_rf"]:
             if (
                 self.kwargs("pipeline")["converter"]
@@ -497,6 +488,17 @@ class App(holoscan.core.Application):
                 )
                 self.add_flow(last_op, drf_sink)
             else:
+                if self.kwargs("pipeline")["int_converter"]:
+                    # due to check earlier, we know pipeline.converter is true here
+                    # and the conversion back to int is needed
+                    int_converter = rf_array.TypeConversionComplexFloatToInt(
+                        self,
+                        cuda_stream_pool,
+                        name="int_converter",
+                    )
+                self.add_flow(last_op, int_converter)
+                last_op = int_converter
+
                 drf_sink = rf_array.DigitalRFSink_sc16(
                     self,
                     cuda_stream_pool,
