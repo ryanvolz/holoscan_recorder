@@ -223,43 +223,46 @@ class Spectrogram(holoscan.core.Operator):
         op_output: holoscan.core.OutputContext,
         context: holoscan.core.ExecutionContext,
     ):
+        # We only process one input in this compute because we want the outputs emitted
+        # as soon as possible to minimize latency and let downstream operators work.
         rf_arr = op_input.receive("rf_in")
+        if rf_arr is None:
+            return
         stream_ptr = op_input.receive_cuda_stream("rf_in", allocate=True)
 
-        while rf_arr is not None:
-            rf_metadata = rf_arr.metadata
+        rf_metadata = rf_arr.metadata
 
-            msg = f"Processing spectrogram for chunk with sample_idx {rf_metadata.sample_idx}"
-            self.logger.debug(msg)
+        msg = (
+            f"Processing spectrogram for chunk with sample_idx {rf_metadata.sample_idx}"
+        )
+        self.logger.debug(msg)
 
-            with cp.cuda.ExternalStream(stream_ptr):
-                try:
-                    rf_data = cp.from_dlpack(rf_arr.data)
-                except Exception:
-                    msg = "Failed to convert data to CuPy array, skipping"
-                    self.logger.exception(msg)
-                    return
-                for spec_count, host_spec in enumerate(
-                    self.calc_spectrogram_chunk(rf_data)
-                ):
-                    sample_idx = (
-                        rf_metadata.sample_idx + spec_count * self.spec_sample_cadence
-                    )
-                    spec_metadata = rf_array.RFMetadata(
-                        sample_idx,
-                        rf_metadata.sample_rate_numerator,
-                        rf_metadata.sample_rate_denominator,
-                        rf_metadata.center_freq,
-                    )
-                    out_message = {
-                        # cast to Holoscan Tensor so it is passed without data copy
-                        # allowing emit before the stream is synced
-                        "spec": holoscan.as_tensor(host_spec),
-                        "metadata": spec_metadata,
-                    }
-                    op_output.emit(out_message, "spec_out")
-            # try to receive again to either get another message or exit the while loop
-            rf_arr = op_input.receive("rf_in")
+        with cp.cuda.ExternalStream(stream_ptr):
+            try:
+                rf_data = cp.from_dlpack(rf_arr.data)
+            except Exception:
+                msg = "Failed to convert data to CuPy array, skipping"
+                self.logger.exception(msg)
+                return
+            for spec_count, host_spec in enumerate(
+                self.calc_spectrogram_chunk(rf_data)
+            ):
+                sample_idx = (
+                    rf_metadata.sample_idx + spec_count * self.spec_sample_cadence
+                )
+                spec_metadata = rf_array.RFMetadata(
+                    sample_idx,
+                    rf_metadata.sample_rate_numerator,
+                    rf_metadata.sample_rate_denominator,
+                    rf_metadata.center_freq,
+                )
+                out_message = {
+                    # cast to Holoscan Tensor so it is passed without data copy
+                    # allowing emit before the stream is synced
+                    "spec": holoscan.as_tensor(host_spec),
+                    "metadata": spec_metadata,
+                }
+                op_output.emit(out_message, "spec_out")
 
     def calc_spectrogram_chunk(self, rf_data):
         # get pinned host memory for output so copy can run asynchronously
@@ -478,7 +481,9 @@ class SpectrogramMQTT(holoscan.core.Operator):
         stream.synchronize()
         while spec_message is not None:
             self.compute_one(spec_message)
-            # try to receive again to either get another message or exit the while loop
+            # Try to receive again to either get another message or exit the while loop.
+            # If there were other messages in the queue, then we've already synced with
+            # the stream after they were put there so we might as well process them now.
             spec_message = op_input.receive("spec_in")
 
     def compute_one(self, spec_message):
@@ -809,7 +814,9 @@ class SpectrogramOutput(holoscan.core.Operator):
         stream.synchronize()
         while spec_message is not None:
             self.compute_one(spec_message)
-            # try to receive again to either get another message or exit the while loop
+            # Try to receive again to either get another message or exit the while loop.
+            # If there were other messages in the queue, then we've already synced with
+            # the stream after they were put there so we might as well process them now.
             spec_message = op_input.receive("spec_in")
 
     def compute_one(self, spec_message):
