@@ -54,6 +54,13 @@ COPY --chmod=775 src/spectrogram.py /app/spectrogram.py
 FROM base AS mep
 LABEL org.opencontainers.image.description="Holoscan MEP recorder"
 
+# Install nsight-systems for profiling
+ARG DEBIAN_FRONTEND=noninteractive
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+    nsight-systems
+
 # Set capabilities on python binary needed by the recorder script for realtime
 RUN setcap cap_sys_nice+ep $(realpath $(which python3))
 
