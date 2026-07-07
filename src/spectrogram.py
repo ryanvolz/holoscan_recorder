@@ -326,7 +326,7 @@ class Spectrogram(holoscan.core.Operator):
             graph = self._capture_stream.end_capture()
         graph.launch(stream=stream)
         # copy result into (host-pinned) numpy array
-        host_spec = spec.get(out=spec_pinned, blocking=False)
+        host_spec = spec.get(stream=stream, out=spec_pinned, blocking=False)
         event = cp.cuda.Event(block=True, disable_timing=True, interprocess=True)
         stream.record(event)
 
