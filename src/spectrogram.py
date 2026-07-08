@@ -766,7 +766,8 @@ class SpectrogramOutput(holoscan.core.Operator):
             dpi=self.dpi,
         )
         fig.get_layout_engine().set(w_pad=1 / 72, h_pad=1 / 72)
-        self.norm = mpl.colors.Normalize(vmin=self.snr_db_min - self.snr_db_max, vmax=0)
+        # don't set any vmin or vmax yet so it doesn't clip when setting later
+        self.norm = mpl.colors.Normalize()
         xlocator = mpl.dates.AutoDateLocator(minticks=3, maxticks=7)
         xformatter = mpl.dates.ConciseDateFormatter(xlocator)
         axs_1d = []
@@ -942,8 +943,14 @@ class SpectrogramOutput(holoscan.core.Operator):
         ref_pwr_dbfs = 10 * np.log10(reference_pwr)
         # use rounded ref power to set scale so it is consistent for small noise changes
         ref_pwr_dbfs_rnd = np.round(ref_pwr_dbfs)
-        self.norm.vmax = np.minimum(ref_pwr_dbfs_rnd + self.snr_db_max, 5 * np.log10(2))
-        self.norm.vmin = ref_pwr_dbfs_rnd + self.snr_db_min
+        vmin = ref_pwr_dbfs_rnd + self.snr_db_min
+        vmax = np.minimum(ref_pwr_dbfs_rnd + self.snr_db_max, 5 * np.log10(2))
+        # set vmin twice because it will be clipped to old vmax value if vmin > vmax_old
+        # on the first attempt so we need a second attempt after vmax is set
+        # vice versa would be true as well if vmax < vmin_old and setting vmax first
+        self.norm.vmin = vmin
+        self.norm.vmax = vmax
+        self.norm.vmin = vmin
         spec_power_dbfs = 10 * np.log10(output_spec_data)
         # delta from time_idx b/c it will have a [1], while output_time_idx might not
         delta_t = time_idx[1] - time_idx[0]
