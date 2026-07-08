@@ -236,6 +236,9 @@ class Spectrogram(holoscan.core.Operator):
             return
         stream_ptr = op_input.receive_cuda_stream("rf_in", allocate=True)
         stream = cp.cuda.ExternalStream(stream_ptr)
+        # ensure that deallocation of rf_arr.data (when it is destroyed at end of
+        # compute() call) occurs on this stream after computation is done
+        rf_arr.set_deallocation_stream(stream_ptr)
 
         rf_metadata = rf_arr.metadata
 
