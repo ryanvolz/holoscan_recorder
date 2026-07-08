@@ -457,6 +457,7 @@ class App(holoscan.core.Application):
                 )
 
             if self.kwargs("pipeline")["spectrogram0"]:
+                spec_thread_pool0 = self.make_thread_pool("spectrogram_thread_pool0", 3)
                 spectrogram0 = Spectrogram(
                     self,
                     cuda_stream_pool,
@@ -471,6 +472,7 @@ class App(holoscan.core.Application):
                 #     port_type=holoscan.core.IOSpec.IOType.OUTPUT,
                 #     policy=holoscan.core.IOSpec.QueuePolicy.POP,
                 # )
+                spec_thread_pool0.add(spectrogram0, True)
                 self.add_flow(last_op, spectrogram0)
 
                 if self.kwargs("pipeline")["spectrogram_mqtt0"]:
@@ -495,6 +497,7 @@ class App(holoscan.core.Application):
                         name="spectrogram_mqtt0",
                         **spec_mqtt_kwargs,
                     )
+                    spec_thread_pool0.add(spectrogram_mqtt0, True)
                     self.add_flow(spectrogram0, spectrogram_mqtt0)
 
                 if self.kwargs("pipeline")["spectrogram_output0"]:
@@ -524,6 +527,7 @@ class App(holoscan.core.Application):
                         name="spectrogram_output0",
                         **spec_out_kwargs,
                     )
+                    spec_thread_pool0.add(spectrogram_output0, True)
                     self.add_flow(spectrogram0, spectrogram_output0)
 
         if self.kwargs("pipeline")["digital_rf0"]:
@@ -670,6 +674,8 @@ class App(holoscan.core.Application):
                 )
 
             if self.kwargs("pipeline")["spectrogram1"]:
+                spec_thread_pool1 = self.make_thread_pool("spectrogram_thread_pool1", 3)
+
                 spectrogram1 = Spectrogram(
                     self,
                     cuda_stream_pool,
@@ -684,6 +690,7 @@ class App(holoscan.core.Application):
                 #     port_type=holoscan.core.IOSpec.IOType.OUTPUT,
                 #     policy=holoscan.core.IOSpec.QueuePolicy.POP,
                 # )
+                spec_thread_pool1.add(spectrogram1, True)
                 self.add_flow(last_op, spectrogram1)
 
                 if self.kwargs("pipeline")["spectrogram_mqtt1"]:
@@ -708,6 +715,7 @@ class App(holoscan.core.Application):
                         name="spectrogram_mqtt1",
                         **spec_mqtt_kwargs,
                     )
+                    spec_thread_pool1.add(spectrogram_mqtt1, True)
                     self.add_flow(spectrogram1, spectrogram_mqtt1)
 
                 if self.kwargs("pipeline")["spectrogram_output1"]:
@@ -737,6 +745,7 @@ class App(holoscan.core.Application):
                         name="spectrogram_output1",
                         **spec_out_kwargs,
                     )
+                    spec_thread_pool1.add(spectrogram_output1, True)
                     self.add_flow(spectrogram1, spectrogram_output1)
 
         if self.kwargs("pipeline")["digital_rf1"]:
