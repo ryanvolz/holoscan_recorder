@@ -27,7 +27,7 @@ import typing
 import holoscan
 import jsonargparse
 import matplotlib as mpl
-from holohub import advanced_network_common, rf_array
+from holohub import rf_array
 from holohub.rf_array.digital_metadata import DigitalMetadataSink
 from holohub.rf_array.params import (
     DigitalRFSinkParams,
@@ -314,26 +314,6 @@ def build_config_parser():
     return parser
 
 
-class AdvNetworkInitOp(holoscan.core.Operator):
-    def __init__(self, fragment, *args, **kwargs):
-        super().__init__(fragment, *args, **kwargs)
-        self.logger = logging.getLogger("holoscan.vsword_recorder.AdvNetworkInitOp")
-
-    def setup(self, spec: holoscan.core.OperatorSpec):
-        pass
-
-    def compute(self, op_input, op_output, context):
-        advanced_network_common.adv_net_init(
-            self.fragment.from_config("advanced_network")
-        )
-
-    def stop(self):
-        try:
-            advanced_network_common.shutdown()
-        except Exception:
-            self.logger.exception("Exception during shutdown!")
-
-
 class App(holoscan.core.Application):
     def compose(self):
         cuda_stream_pool = holoscan.resources.CudaStreamPool(
@@ -355,12 +335,6 @@ class App(holoscan.core.Application):
         # Holoscan 3.2 doesn't support add_realtime() for thread pool, so skip for now
         # network_thread_pool = self.make_thread_pool("network_thread_pool", 2)
 
-        advanced_network_init_op = AdvNetworkInitOp(
-            self,
-            holoscan.conditions.CountCondition(self, count=1),
-            name="advanced_network_init_op",
-        )
-
         # sample flow 0
 
         packet0_kwargs = self.kwargs("packet0")
@@ -373,6 +347,7 @@ class App(holoscan.core.Application):
             ),
             priority_stream_pool,
             name="net_connector_rx0",
+            advanced_network=str(self.from_config("advanced_network")),
             **packet0_kwargs,
         )
         net_connector_rx0.spec.outputs["rf_out"].condition(
@@ -390,9 +365,6 @@ class App(holoscan.core.Application):
         #     pin_operator=True,
         #     sched_priority=10,
         # )
-        self.add_flow(advanced_network_init_op, net_connector_rx0)
-        # loopback because advanced_network_init_op happens once, need to trigger self
-        self.add_flow(net_connector_rx0, net_connector_rx0)
 
         last_chunk_shape = (
             self.kwargs("packet0")["num_samples"],
@@ -590,6 +562,7 @@ class App(holoscan.core.Application):
             ),
             priority_stream_pool,
             name="net_connector_rx1",
+            advanced_network=str(self.from_config("advanced_network")),
             **packet1_kwargs,
         )
         net_connector_rx1.spec.outputs["rf_out"].condition(
@@ -607,9 +580,6 @@ class App(holoscan.core.Application):
         #     pin_operator=True,
         #     sched_priority=10,
         # )
-        self.add_flow(advanced_network_init_op, net_connector_rx1)
-        # loopback because advanced_network_init_op happens once, need to trigger self
-        self.add_flow(net_connector_rx1, net_connector_rx1)
 
         last_chunk_shape = (
             self.kwargs("packet1")["num_samples"],
