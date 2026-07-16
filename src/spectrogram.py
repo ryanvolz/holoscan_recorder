@@ -284,7 +284,7 @@ class Spectrogram(holoscan.core.Operator):
                 metadata=spec_metadata,
                 event=event,
             )
-            op_output.emit(out_message, "spec_out")
+            op_output.emit(out_message, "spec_out", "PyObject")
 
     def calc_spectrogram_chunk(self, rf_data, stream=None):
         if stream is None:
