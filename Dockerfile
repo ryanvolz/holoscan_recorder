@@ -20,6 +20,7 @@ ARG BASE_IMAGE=ghcr.io/ryanvolz/holohub/rf-array-cuda-12-6:edge
 FROM ${BASE_IMAGE} AS base
 
 # Set up environment variables (possibly customized by container user)
+ENV CUPY_GPU_MEMORY_LIMIT=25%
 ENV HOLOSCAN_EXECUTOR_LOG_LEVEL=WARN
 ENV HOLOSCAN_LOG_LEVEL=INFO
 ENV HOLOSCAN_LOG_FORMAT=DEFAULT

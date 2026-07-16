@@ -1008,7 +1008,7 @@ class SpectrogramOutput(holoscan.core.Operator):
                 data=spec_power_dbfs[:, sch, :].T,
                 extent=extent,
             )
-        self.ref_lvl_text.set_text(f"Noise: {float(ref_pwr_dbfs):.2f} [dbFS]")
+        self.ref_lvl_text.set_text(f"Noise: {float(ref_pwr_dbfs):.2f} [dBFS]")
         self.suptitle.set_text(
             f"{self.data_path.parent.name}/{self.data_path.name} @ {freqstr}"
         )
@@ -1024,6 +1024,11 @@ class SpectrogramOutput(holoscan.core.Operator):
 
         # track that we just wrote a sample
         self.last_written_sample_idx = sample_idx
+
+        # free memory now since writing output can bloat input buffer and
+        # this seems to help keep long-term memory use down
+        mempool.free_all_blocks()
+        pinned_mempool.free_all_blocks()
 
     def stop(self):
         self.write_output()
