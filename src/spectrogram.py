@@ -209,7 +209,7 @@ class Spectrogram(holoscan.core.Operator):
         )
 
     def initialize(self):
-        self.logger.debug("Initializing spectrogram operator")
+        self.logger.debug(f"Initializing {self.name} operator")
 
         self._capture_stream = cp.cuda.Stream(non_blocking=True)
 
@@ -245,7 +245,7 @@ class Spectrogram(holoscan.core.Operator):
         rf_metadata = rf_arr.metadata
 
         msg = (
-            f"Processing spectrogram for chunk with sample_idx {rf_metadata.sample_idx}"
+            f"Processing {self.name} for chunk with sample_idx {rf_metadata.sample_idx}"
         )
         self.logger.debug(msg)
 
@@ -480,7 +480,7 @@ class SpectrogramMQTT(holoscan.core.Operator):
         )
 
     def initialize(self):
-        self.logger.debug("Initializing spectrogram MQTT output operator")
+        self.logger.debug(f"Initializing {self.name} operator")
 
         client_kwargs = {}
         if self.payload_format == "f32buffer":
@@ -496,7 +496,10 @@ class SpectrogramMQTT(holoscan.core.Operator):
             self.mqtt_client.loop_start()
         except Exception:
             self.logger.exception("Failed to connect to MQTT broker")
-        self.mqtt_client.enable_logger(self.logger)
+        if os.environ.get("HOLOSCAN_LOG_LEVEL", "WARN").upper() == "TRACE":
+            # MQTT logging is a lot, so only enable it if TRACE level
+            # (not supported by Python, translated to DEBUG) is wanted
+            self.mqtt_client.enable_logger(self.logger)
         self.mqtt_client.publish(
             self.status_topic, payload='{"state": "online"}', qos=0, retain=True
         )
@@ -735,7 +738,7 @@ class SpectrogramOutput(holoscan.core.Operator):
         )
 
     def initialize(self):
-        self.logger.debug("Initializing spectrogram output operator")
+        self.logger.debug(f"Initializing {self.name} operator")
         self.data_path.mkdir(parents=True, exist_ok=True)
         self.last_written_sample_idx = -1
         self.latest_chunk_idx = 0
