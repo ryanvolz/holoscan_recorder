@@ -50,7 +50,9 @@ from jsonargparse.typing import PositiveInt
 mpl.use("agg")
 
 # use asynchronous stream ordered memory
-cp.cuda.set_allocator(cp.cuda.MemoryAsyncPool().malloc)
+mempool = cp.cuda.MemoryAsyncPool()
+cp.cuda.set_allocator(mempool.malloc)
+pinned_mempool = cp.get_default_pinned_memory_pool()
 
 
 def timestamp_floor(nsamples, sample_rate_frac):
@@ -283,6 +285,15 @@ class Spectrogram(holoscan.core.Operator):
         )
         spec_pinned[...] = np.nan
 
+        if self.logger.isEnabledFor(logging.DEBUG):
+            # if statement to protect expensive eval of pinned_mempool.n_free_blocks()
+            msg = (
+                f"{self.name} allocated pinned memory, "
+                f"{pinned_mempool.n_free_blocks()} free blocks. "
+                "Now building computation graph."
+            )
+            self.logger.debug(msg)
+
         # break rf_data into chunks and transpose so we have shape
         # (num_spectra_per_chunk, num_subchannels, chunk_size // num_spectra_per_chunk)
         # and can take FFT over the last axis
@@ -327,6 +338,13 @@ class Spectrogram(holoscan.core.Operator):
                 self.reduce_op(Zxx.real**2 + Zxx.imag**2, axis=-1), axes=-1
             )
             graph = self._capture_stream.end_capture()
+
+        msg = (
+            f"Mempool at launch of {self.name} computation graph: "
+            f"{mempool.used_bytes()} used / {mempool.total_bytes()} total bytes"
+        )
+        self.logger.debug(msg)
+
         graph.launch(stream=stream)
         # copy result into (host-pinned) numpy array
         host_spec = spec.get(stream=stream, out=spec_pinned, blocking=False)
