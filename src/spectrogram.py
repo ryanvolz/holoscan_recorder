@@ -79,6 +79,18 @@ def timestamp_floor(nsamples, sample_rate_frac):
 
 
 @dataclasses.dataclass
+class SpecMsg:
+    """Spectrogram message emitted / received by the spectrogram operators"""
+
+    spec: holoscan.core.Tensor
+    """Spectrogram data tensor, C-contiguous with shape (num_subchannels, nfft)"""
+    metadata: rf_array.RFMetadata
+    """Metadata from the corresponding RFArray"""
+    event: cp.cuda.Event
+    """Event indicating when the `spec` result is ready and can be used"""
+
+
+@dataclasses.dataclass
 class SpectrogramParams:
     """Spectrogram parameters"""
 
@@ -265,13 +277,13 @@ class Spectrogram(holoscan.core.Operator):
                 rf_metadata.sample_rate_denominator,
                 rf_metadata.center_freq,
             )
-            out_message = {
+            out_message = SpecMsg(
                 # cast to Holoscan Tensor so it is passed without data copy
                 # allowing emit before the stream is synced
-                "spec": holoscan.as_tensor(spec),
-                "metadata": spec_metadata,
-                "event": event,
-            }
+                spec=holoscan.as_tensor(spec),
+                metadata=spec_metadata,
+                event=event,
+            )
             op_output.emit(out_message, "spec_out")
 
     def calc_spectrogram_chunk(self, rf_data, stream=None):
@@ -514,17 +526,17 @@ class SpectrogramMQTT(holoscan.core.Operator):
         # synchronize to ensure data is in host memory before proceeding
         # (do this here because input buffer is large and therefore waiting on this
         #  operator does not slow down upstream operators)
-        spec_ready_event = spec_message["event"]
+        spec_ready_event = spec_message.event
         spec_ready_event.synchronize()
         del spec_ready_event
 
         # spec_arr is C-contiguous with shape (num_subchannels, nfft)
         try:
-            spec_arr = np.from_dlpack(spec_message["spec"])
+            spec_arr = np.from_dlpack(spec_message.spec)
         except Exception:
             self.logger.exception("Failed to convert data to numpy array, skipping")
             return
-        rf_metadata = spec_message["metadata"]
+        rf_metadata = spec_message.metadata
 
         payload, properties = self.make_payload(spec_arr, rf_metadata)
         try:
@@ -841,17 +853,17 @@ class SpectrogramOutput(holoscan.core.Operator):
         # synchronize to ensure data is in host memory before proceeding
         # (do this here because input buffer is large and therefore waiting on this
         #  operator does not slow down upstream operators)
-        spec_ready_event = spec_message["event"]
+        spec_ready_event = spec_message.event
         spec_ready_event.synchronize()
         del spec_ready_event
 
         # spec_arr is C-contiguous with shape (num_subchannels, nfft)
         try:
-            spec_arr = np.from_dlpack(spec_message["spec"])
+            spec_arr = np.from_dlpack(spec_message.spec)
         except Exception:
             self.logger.exception("Failed to convert data to numpy array, skipping")
             return
-        rf_metadata = spec_message["metadata"]
+        rf_metadata = spec_message.metadata
 
         # reset stored data with new metadata if uninitialized
         # (first time or finished previous write)
