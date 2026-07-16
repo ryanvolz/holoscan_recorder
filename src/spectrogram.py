@@ -223,7 +223,10 @@ class Spectrogram(holoscan.core.Operator):
     def initialize(self):
         self.logger.debug(f"Initializing {self.name} operator")
 
-        self._capture_stream = cp.cuda.Stream(non_blocking=True)
+        # Using capture and graph seems broken for now, causing access
+        # to deallocated memory when run with compute-sanitizer.
+        # So disable this for now.
+        # self._capture_stream = cp.cuda.Stream(non_blocking=True)
 
         # get device array for window ahead of time so we don't need to do a host
         # to device transfer for every spectrogram to get the window array
@@ -317,9 +320,13 @@ class Spectrogram(holoscan.core.Operator):
             )
         ).transpose((0, 2, 1))
 
+        # Using capture and graph seems broken for now, causing access
+        # to deallocated memory when run with compute-sanitizer.
+        # So disable this for now.
         # capture GPU operations into a graph, which can be optimized and launched
-        with self._capture_stream:
-            self._capture_stream.begin_capture()
+        # with self._capture_stream:
+        # self._capture_stream.begin_capture()
+        with stream:
             with self.cufft_plan as plan:
                 _freqs, _sidxs, Zxx = cpss.stft(
                     spectrum_chunks,
@@ -349,7 +356,7 @@ class Spectrogram(holoscan.core.Operator):
             spec = cp.fft.fftshift(
                 self.reduce_op(Zxx.real**2 + Zxx.imag**2, axis=-1), axes=-1
             )
-            graph = self._capture_stream.end_capture()
+            # graph = self._capture_stream.end_capture()
 
         msg = (
             f"Mempool at launch of {self.name} computation graph: "
@@ -357,7 +364,7 @@ class Spectrogram(holoscan.core.Operator):
         )
         self.logger.debug(msg)
 
-        graph.launch(stream=stream)
+        # graph.launch(stream=stream)
         # copy result into (host-pinned) numpy array
         host_spec = spec.get(stream=stream, out=spec_pinned, blocking=False)
         event = cp.cuda.Event(block=True, disable_timing=True, interprocess=True)
