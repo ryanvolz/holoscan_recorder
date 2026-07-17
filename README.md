@@ -51,7 +51,7 @@ apt install cuda-sanitizer-12-2
 3. Run the recorder script with compute-sanitizer:
 
 ```
-compute-sanitizer --log-file sanitizer.log --tool memcheck --target-processes all python3 /app/vsword_recorder.py --config /config/survey.yaml --ram_ringbuffer_path . --output_path /data/ringbuffer
+compute-sanitizer --log-file sanitizer.log --tool memcheck --target-processes all --leak-check full --track-stream-ordered-races all --padding 64 timeout 90s  python3 /app/vsword_recorder.py --config /config/survey.yaml --ram_ringbuffer_path . --output_path /data/ringbuffer
 ```
 
 ## Debugging with cuda-gdb
