@@ -49,9 +49,11 @@ from jsonargparse.typing import PositiveInt
 
 mpl.use("agg")
 
+# DO NOT use async pool, get more stable memory use with default pool
 # use asynchronous stream ordered memory
-mempool = cp.cuda.MemoryAsyncPool()
-cp.cuda.set_allocator(mempool.malloc)
+# mempool = cp.cuda.MemoryAsyncPool()
+# cp.cuda.set_allocator(mempool.malloc)
+mempool = cp.get_default_memory_pool()
 pinned_mempool = cp.get_default_pinned_memory_pool()
 
 
@@ -228,15 +230,22 @@ class Spectrogram(holoscan.core.Operator):
         # So disable this for now.
         # self._capture_stream = cp.cuda.Stream(non_blocking=True)
 
+    def start(self):
+        self.logger.debug(f"Starting {self.name} operator")
+        stream_ptr = self.execution_context.allocate_cuda_stream("_internal")
+        stream = cp.cuda.ExternalStream(stream_ptr)
+
         # get device array for window ahead of time so we don't need to do a host
         # to device transfer for every spectrogram to get the window array
-        self.window = cpss.get_window(self.window_str, self.nperseg)
+        with stream:
+            self.window = cpss.get_window(self.window_str, self.nperseg)
 
         # warm up CUDA calculation to force one-time overheads into init
         # so we don't spend an extra long time in the first compute call
         # and delay other operators
         for _spec in self.calc_spectrogram_chunk(
             cp.ones((self.chunk_size, self.num_subchannels), dtype="complex64"),
+            stream=stream,
         ):
             pass
 
