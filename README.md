@@ -22,7 +22,7 @@ docker compose exec recorder bash
 4. Run the recorder script with nsys profile:
 
 ```
-HOLOSCAN_ENABLE_PROFILE=1 nsys profile --trace=cuda,nvtx,osrt --cudabacktrace=all --duration=60 python3 /app/vsword_recorder.py --config /config/survey.yaml --ram_ringbuffer_path . --output_path /data/ringbuffer
+HOLOSCAN_ENABLE_PROFILE=1 nsys profile --trace=cuda,nvtx,osrt --cudabacktrace=all --cuda-memory-usage=true --duration=60 python3 /app/vsword_recorder.py --config /config/survey.yaml --ram_ringbuffer_path . --output_path /data/ringbuffer
 ```
 
 ## Analyzing with compute-sanitizer
@@ -51,7 +51,7 @@ apt install cuda-sanitizer-12-2
 3. Run the recorder script with compute-sanitizer:
 
 ```
-compute-sanitizer --log-file sanitizer.log --tool memcheck --target-processes all --leak-check full --track-stream-ordered-races all --padding 64 timeout 90s  python3 /app/vsword_recorder.py --config /config/survey.yaml --ram_ringbuffer_path . --output_path /data/ringbuffer
+compute-sanitizer --log-file sanitizer.log --tool memcheck --target-processes all --leak-check full --track-stream-ordered-races all --padding 64 timeout 90s python3 /app/vsword_recorder.py --config /config/survey.yaml --ram_ringbuffer_path . --output_path /data/ringbuffer
 ```
 
 ## Debugging with cuda-gdb
