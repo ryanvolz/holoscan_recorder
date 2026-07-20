@@ -82,7 +82,7 @@ jsonargparse.set_parsing_settings(docstring_parse_attribute_docstrings=True)
 class SchedulerParams:
     """Event-based scheduler parameters"""
 
-    worker_thread_number: PositiveInt = 16
+    worker_thread_number: PositiveInt = 2
     """Number of worker threads"""
     stop_on_deadlock: bool = True
     """Whether the application will terminate if a deadlock occurs"""
@@ -164,17 +164,17 @@ def build_config_parser():
     # special config argument to load from yaml file
     parser.add_argument("--config", action="config")
     # operator arguments
-    parser.add_argument("--scheduler", type=SchedulerParams)
-    parser.add_argument("--pipeline", type=PipelineParams)
-    parser.add_argument("--basic_network", type=BasicNetworkOperatorParams)
-    parser.add_argument("--advanced_network", type=AdvancedNetworkOperatorParams)
-    parser.add_argument(
-        "--packet_common",
-        type=NetConnectorAdvancedParams,
+    parser.add_class_arguments(SchedulerParams, "scheduler")
+    parser.add_class_arguments(PipelineParams, "pipeline")
+    parser.add_class_arguments(BasicNetworkOperatorParams, "basic_network")
+    parser.add_class_arguments(AdvancedNetworkOperatorParams, "advanced_network")
+    parser.add_class_arguments(
+        NetConnectorAdvancedParams,
+        "packet_common",
     )
-    parser.add_argument(
-        "--packet0",
-        type=NetConnectorAdvancedParams,
+    parser.add_class_arguments(
+        NetConnectorAdvancedParams,
+        "packet0",
         default=NetConnectorAdvancedParams(
             max_packet_size=4160,
             num_subchannels=8,
@@ -183,9 +183,9 @@ def build_config_parser():
             queue_id=0,
         ),
     )
-    parser.add_argument(
-        "--packet1",
-        type=NetConnectorAdvancedParams,
+    parser.add_class_arguments(
+        NetConnectorAdvancedParams,
+        "packet1",
         default=NetConnectorAdvancedParams(
             max_packet_size=4160,
             num_subchannels=8,
@@ -194,29 +194,29 @@ def build_config_parser():
             queue_id=1,
         ),
     )
-    parser.add_argument(
-        "--selector0",
-        type=SubchannelSelectParams,
+    parser.add_class_arguments(
+        SubchannelSelectParams,
+        "selector0",
         default=SubchannelSelectParams(subchannel_idx=[0, 1, 2, 3, 4, 5]),
     )
-    parser.add_argument(
-        "--selector1",
-        type=SubchannelSelectParams,
+    parser.add_class_arguments(
+        SubchannelSelectParams,
+        "selector1",
         default=SubchannelSelectParams(subchannel_idx=[0, 1, 2, 3, 4, 5]),
     )
-    parser.add_argument("--rotator0", type=RotatorScheduledParams)
-    parser.add_argument(
-        "--rotator1",
-        type=RotatorScheduledParams,
+    parser.add_class_arguments(RotatorScheduledParams, "rotator0")
+    parser.add_class_arguments(
+        RotatorScheduledParams,
+        "rotator1",
         default=RotatorScheduledParams(
             cycle_duration_secs=1,
             cycle_start_timestamp=0,
             schedule=[{"start": 0, "freq": 31.65e6}],
         ),
     )
-    parser.add_argument(
-        "--resampler0",
-        type=ResamplePolyParams,
+    parser.add_class_arguments(
+        ResamplePolyParams,
+        "resampler0",
         default=ResamplePolyParams(
             up=1,
             down=20,
@@ -225,9 +225,9 @@ def build_config_parser():
             attenuation_db=98.35,
         ),
     )
-    parser.add_argument(
-        "--resampler1",
-        type=ResamplePolyParams,
+    parser.add_class_arguments(
+        ResamplePolyParams,
+        "resampler1",
         default=ResamplePolyParams(
             up=1,
             down=2,
@@ -236,14 +236,14 @@ def build_config_parser():
             attenuation_db=98.35,
         ),
     )
-    parser.add_argument(
-        "--drf_sink0",
-        type=DigitalRFSinkParams,
+    parser.add_class_arguments(
+        DigitalRFSinkParams,
+        "drf_sink0",
         default=DigitalRFSinkParams(channel_dir="emvsis/vs"),
     )
-    parser.add_argument(
-        "--drf_sink1",
-        type=DigitalRFSinkParams,
+    parser.add_class_arguments(
+        DigitalRFSinkParams,
+        "drf_sink1",
         default=DigitalRFSinkParams(channel_dir="zephyr/vs"),
     )
     parser.add_argument(
@@ -252,19 +252,19 @@ def build_config_parser():
     parser.add_argument(
         "--metadata1", type=typing.Optional[dict[str, typing.Any]], default=None
     )
-    parser.add_argument(
-        "--spectrogram0",
-        type=SpectrogramParams,
+    parser.add_class_arguments(
+        SpectrogramParams,
+        "spectrogram0",
         default=SpectrogramParams(nperseg=1000),
     )
-    parser.add_argument(
-        "--spectrogram1",
-        type=SpectrogramParams,
+    parser.add_class_arguments(
+        SpectrogramParams,
+        "spectrogram1",
         default=SpectrogramParams(nperseg=1000),
     )
-    parser.add_argument(
-        "--spectrogram_mqtt0",
-        type=SpectrogramMQTTParams,
+    parser.add_class_arguments(
+        SpectrogramMQTTParams,
+        "spectrogram_mqtt0",
         default=SpectrogramMQTTParams(
             service_name="spectrogram-emvsis",
             status_topic="dt/vsword/{service_name}/{node_id}/status",
@@ -272,9 +272,9 @@ def build_config_parser():
             payload_format="f32buffer",
         ),
     )
-    parser.add_argument(
-        "--spectrogram_mqtt1",
-        type=SpectrogramMQTTParams,
+    parser.add_class_arguments(
+        SpectrogramMQTTParams,
+        "spectrogram_mqtt1",
         default=SpectrogramMQTTParams(
             service_name="spectrogram-zephyr",
             status_topic="dt/vsword/{service_name}/{node_id}/status",
@@ -282,14 +282,14 @@ def build_config_parser():
             payload_format="f32buffer",
         ),
     )
-    parser.add_argument(
-        "--spectrogram_output0",
-        type=SpectrogramOutputParams,
+    parser.add_class_arguments(
+        SpectrogramOutputParams,
+        "spectrogram_output0",
         default=SpectrogramOutputParams(plot_subdir="spectrograms/emvsis"),
     )
-    parser.add_argument(
-        "--spectrogram_output1",
-        type=SpectrogramOutputParams,
+    parser.add_class_arguments(
+        SpectrogramOutputParams,
+        "spectrogram_output1",
         default=SpectrogramOutputParams(plot_subdir="spectrograms/zephyr"),
     )
 
@@ -315,10 +315,10 @@ def build_config_parser():
 
 
 class App(holoscan.core.Application):
-    def compose(self):
+    def add_channel_flow(self, ch_idx):
         cuda_stream_pool = holoscan.resources.CudaStreamPool(
             self,
-            name="stream_pool",
+            name=f"ch{ch_idx}_stream_pool",
             stream_flags=1,  # cudaStreamNonBlocking
             stream_priority=0,
             reserved_size=1,
@@ -326,19 +326,18 @@ class App(holoscan.core.Application):
         )
         priority_stream_pool = holoscan.resources.CudaStreamPool(
             self,
-            name="priority_stream_pool",
+            name=f"ch{ch_idx}_priority_stream_pool",
             stream_flags=1,  # cudaStreamNonBlocking
             stream_priority=-2,  # lower means higher priority
             reserved_size=1,
             max_size=0,
         )
+        thread_pool = self.make_thread_pool(f"ch{ch_idx}_pinned_thread_pool", 1)
         # Holoscan 3.2 doesn't support add_realtime() for thread pool, so skip for now
-        # network_thread_pool = self.make_thread_pool("network_thread_pool", 2)
+        # network_thread_pool = self.make_thread_pool(f"ch{ch_idx}_network_thread_pool", 2)
 
-        # sample flow 0
-
-        packet0_kwargs = self.kwargs("packet0")
-        net_connector_rx0 = rf_array.NetConnectorAdvanced(
+        packet_kwargs = self.kwargs(f"packet{ch_idx}")
+        net_connector_rx = rf_array.NetConnectorAdvanced(
             self,
             holoscan.conditions.PeriodicCondition(
                 self,
@@ -346,81 +345,92 @@ class App(holoscan.core.Application):
                 policy=holoscan.conditions.PeriodicConditionPolicy.NO_CATCH_UP_MISSED_TICKS,
             ),
             priority_stream_pool,
-            name="net_connector_rx0",
+            name=f"net_connector_rx{ch_idx}",
             advanced_network=str(self.from_config("advanced_network")),
-            **packet0_kwargs,
+            **packet_kwargs,
         )
-        net_connector_rx0.spec.outputs["rf_out"].condition(
+        net_connector_rx.spec.outputs["rf_out"].condition(
             holoscan.core.ConditionType.DOWNSTREAM_MESSAGE_AFFORDABLE,
-            min_size=packet0_kwargs.get("buffer_size", 4),
+            min_size=packet_kwargs.get("buffer_size", 4),
         ).connector(
             holoscan.core.IOSpec.ConnectorType.DOUBLE_BUFFER,
-            capacity=2 * packet0_kwargs.get("buffer_size", 4),
+            capacity=2 * packet_kwargs.get("buffer_size", 4),
             policy=0,  # pop
         )
         # Holoscan 3.2 doesn't support add_realtime() for thread pool, so skip for now
         # network_thread_pool.add_realtime(
-        #     net_connector_rx0,
+        #     net_connector_rx,
         #     sched_policy=holoscan.resources.SchedulingPolicy.SCHED_RR,
         #     pin_operator=True,
         #     sched_priority=10,
         # )
+        thread_pool.add(net_connector_rx, True)
 
         last_chunk_shape = (
-            self.kwargs("packet0")["num_samples"],
-            self.kwargs("packet0")["num_subchannels"],
+            self.kwargs(f"packet{ch_idx}")["num_samples"],
+            self.kwargs(f"packet{ch_idx}")["num_subchannels"],
         )
-        last_buffer_capacity = 2 * packet0_kwargs.get("buffer_size", 4)
-        last_op = net_connector_rx0
+        last_buffer_capacity = 2 * packet_kwargs.get("buffer_size", 4)
+        last_op = net_connector_rx
 
-        if self.kwargs("pipeline")["selector0"]:
-            selector0 = rf_array.SubchannelSelect_sc16(
-                self, cuda_stream_pool, name="selector0", **self.kwargs("selector0")
+        if self.kwargs("pipeline")[f"selector{ch_idx}"]:
+            selector = rf_array.SubchannelSelect_sc16(
+                self,
+                cuda_stream_pool,
+                name=f"selector{ch_idx}",
+                **self.kwargs(f"selector{ch_idx}"),
             )
-            selector0.spec.inputs["rf_in"].connector(
+            selector.spec.inputs["rf_in"].connector(
                 holoscan.core.IOSpec.ConnectorType.DOUBLE_BUFFER,
                 capacity=last_buffer_capacity,
                 policy=0,  # pop
             )
-            self.add_flow(last_op, selector0, {("rf_out", "rf_in")})
-            last_op = selector0
+            thread_pool.add(selector, True)
+            self.add_flow(last_op, selector, {("rf_out", "rf_in")})
+            last_op = selector
             last_buffer_capacity = 1
             last_chunk_shape = (
                 last_chunk_shape[0],
-                len(self.kwargs("selector0")["subchannel_idx"]),
+                len(self.kwargs(f"selector{ch_idx}")["subchannel_idx"]),
             )
 
-        if self.kwargs("pipeline")["converter0"]:
-            converter0 = rf_array.TypeConversionComplexIntToFloat(
+        if self.kwargs("pipeline")[f"converter{ch_idx}"]:
+            converter = rf_array.TypeConversionComplexIntToFloat(
                 self,
                 cuda_stream_pool,
-                name="converter0",
+                name=f"converter{ch_idx}",
             )
-            converter0.spec.inputs["rf_in"].connector(
+            converter.spec.inputs["rf_in"].connector(
                 holoscan.core.IOSpec.ConnectorType.DOUBLE_BUFFER,
                 capacity=last_buffer_capacity,
                 policy=0,  # pop
             )
-            self.add_flow(last_op, converter0, {("rf_out", "rf_in")})
-            last_op = converter0
+            thread_pool.add(converter, True)
+            self.add_flow(last_op, converter, {("rf_out", "rf_in")})
+            last_op = converter
             last_buffer_capacity = 1
 
-            if self.kwargs("pipeline")["rotator0"]:
-                rotator0 = rf_array.RotatorScheduled(
-                    self, cuda_stream_pool, name="rotator0", **self.kwargs("rotator0")
+            if self.kwargs("pipeline")[f"rotator{ch_idx}"]:
+                rotator = rf_array.RotatorScheduled(
+                    self,
+                    cuda_stream_pool,
+                    name=f"rotator{ch_idx}",
+                    **self.kwargs(f"rotator{ch_idx}"),
                 )
-                self.add_flow(last_op, rotator0)
-                last_op = rotator0
+                thread_pool.add(rotator, True)
+                self.add_flow(last_op, rotator)
+                last_op = rotator
 
-            if self.kwargs("pipeline")["resampler0"]:
+            if self.kwargs("pipeline")[f"resampler{ch_idx}"]:
                 resample_kwargs = add_chunk_kwargs(
-                    last_chunk_shape, **self.kwargs("resampler0")
+                    last_chunk_shape, **self.kwargs(f"resampler{ch_idx}")
                 )
-                resampler0 = rf_array.ResamplePoly(
-                    self, cuda_stream_pool, name="resampler0", **resample_kwargs
+                resampler = rf_array.ResamplePoly(
+                    self, cuda_stream_pool, name=f"resampler{ch_idx}", **resample_kwargs
                 )
-                self.add_flow(last_op, resampler0)
-                last_op = resampler0
+                thread_pool.add(resampler, True)
+                self.add_flow(last_op, resampler)
+                last_op = resampler
                 last_chunk_shape = (
                     last_chunk_shape[0]
                     * resample_kwargs["up"]
@@ -428,13 +438,14 @@ class App(holoscan.core.Application):
                     last_chunk_shape[1],
                 )
 
-            if self.kwargs("pipeline")["spectrogram0"]:
-                spec_thread_pool0 = self.make_thread_pool("spectrogram_thread_pool0", 3)
-                spectrogram0 = Spectrogram(
+            if self.kwargs("pipeline")[f"spectrogram{ch_idx}"]:
+                spectrogram = Spectrogram(
                     self,
                     cuda_stream_pool,
-                    name="spectrogram0",
-                    **add_chunk_kwargs(last_chunk_shape, **self.kwargs("spectrogram0")),
+                    name=f"spectrogram{ch_idx}",
+                    **add_chunk_kwargs(
+                        last_chunk_shape, **self.kwargs(f"spectrogram{ch_idx}")
+                    ),
                 )
                 # Queue policy is currently set by specifying a connector in setup()
                 # # drop old messages rather than get backed up by slow
@@ -444,327 +455,126 @@ class App(holoscan.core.Application):
                 #     port_type=holoscan.core.IOSpec.IOType.OUTPUT,
                 #     policy=holoscan.core.IOSpec.QueuePolicy.POP,
                 # )
-                spec_thread_pool0.add(spectrogram0, True)
-                self.add_flow(last_op, spectrogram0)
+                thread_pool.add(spectrogram, True)
+                self.add_flow(last_op, spectrogram)
 
-                if self.kwargs("pipeline")["spectrogram_mqtt0"]:
-                    spec_mqtt_kwargs = self.kwargs("spectrogram_mqtt0")
+                if self.kwargs("pipeline")[f"spectrogram_mqtt{ch_idx}"]:
+                    spec_mqtt_kwargs = self.kwargs(f"spectrogram_mqtt{ch_idx}")
                     spec_mqtt_kwargs.update(
-                        spec_sample_cadence=spectrogram0.spec_sample_cadence,
+                        spec_sample_cadence=spectrogram.spec_sample_cadence,
                     )
-                    spectrogram_mqtt0 = SpectrogramMQTT(
+                    spectrogram_mqtt = SpectrogramMQTT(
                         self,
                         ## CudaStreamCondition doesn't work with a message queue size
                         ## larger than 1, so get by without it for now
                         # holoscan.conditions.MessageAvailableCondition(
                         #     self,
                         #     receiver="spec_in",
-                        #     name="spectrogram_mqtt0_message_available",
+                        #     name=f"spectrogram_mqtt{ch_idx}_message_available",
                         # ),
                         # holoscan.conditions.CudaStreamCondition(
-                        #     self, receiver="spec_in", name="spectrogram_mqtt0_stream_sync"
+                        #     self, receiver="spec_in", name=f"spectrogram_mqtt{ch_idx}_stream_sync"
                         # ),
                         # # no downstream condition, and we don't want one
                         cuda_stream_pool,
-                        name="spectrogram_mqtt0",
+                        name=f"spectrogram_mqtt{ch_idx}",
                         **spec_mqtt_kwargs,
                     )
-                    spec_thread_pool0.add(spectrogram_mqtt0, True)
-                    self.add_flow(spectrogram0, spectrogram_mqtt0)
+                    thread_pool.add(spectrogram_mqtt, True)
+                    self.add_flow(spectrogram, spectrogram_mqtt)
 
-                if self.kwargs("pipeline")["spectrogram_output0"]:
-                    spec_out_kwargs = self.kwargs("spectrogram_output0")
+                if self.kwargs("pipeline")[f"spectrogram_output{ch_idx}"]:
+                    spec_out_kwargs = self.kwargs(f"spectrogram_output{ch_idx}")
                     spec_out_kwargs.update(
-                        nfft=spectrogram0.nfft,
-                        spec_sample_cadence=spectrogram0.spec_sample_cadence,
-                        num_subchannels=spectrogram0.num_subchannels,
+                        nfft=spectrogram.nfft,
+                        spec_sample_cadence=spectrogram.spec_sample_cadence,
+                        num_subchannels=spectrogram.num_subchannels,
                         data_subdir=(
-                            f"{self.kwargs('drf_sink0')['channel_dir']}_spectrogram"
+                            f"{self.kwargs(f'drf_sink{ch_idx}')['channel_dir']}_spectrogram"
                         ),
                     )
-                    spectrogram_output0 = SpectrogramOutput(
+                    spectrogram_output = SpectrogramOutput(
                         self,
                         ## CudaStreamCondition doesn't work with a message queue size
                         ## larger than 1, so get by without it for now
                         # holoscan.conditions.MessageAvailableCondition(
                         #     self,
                         #     receiver="spec_in",
-                        #     name="spectrogram_output_message_available",
+                        #     name=f"spectrogram_output{ch_idx}_message_available",
                         # ),
                         # holoscan.conditions.CudaStreamCondition(
-                        #     self, receiver="spec_in", name="spectrogram_output_stream_sync"
+                        #     self, receiver="spec_in", name=f"spectrogram_output{ch_idx}_stream_sync"
                         # ),
                         # # no downstream condition, and we don't want one
                         cuda_stream_pool,
-                        name="spectrogram_output0",
+                        name=f"spectrogram_output{ch_idx}",
                         **spec_out_kwargs,
                     )
-                    spec_thread_pool0.add(spectrogram_output0, True)
-                    self.add_flow(spectrogram0, spectrogram_output0)
+                    thread_pool.add(spectrogram_output, True)
+                    self.add_flow(spectrogram, spectrogram_output)
 
-        if self.kwargs("pipeline")["digital_rf0"]:
-            if self.kwargs("pipeline")["converter0"]:
-                drf_sink0 = rf_array.DigitalRFSink_fc32(
+        if self.kwargs("pipeline")[f"digital_rf{ch_idx}"]:
+            if self.kwargs("pipeline")[f"converter{ch_idx}"]:
+                drf_sink = rf_array.DigitalRFSink_fc32(
                     self,
                     cuda_stream_pool,
-                    name="drf_sink0",
-                    **add_chunk_kwargs(last_chunk_shape, **self.kwargs("drf_sink0")),
+                    name=f"drf_sink{ch_idx}",
+                    **add_chunk_kwargs(
+                        last_chunk_shape, **self.kwargs(f"drf_sink{ch_idx}")
+                    ),
                 )
-                drf_sink0.spec.inputs["rf_in"].connector(
+                drf_sink.spec.inputs["rf_in"].connector(
                     holoscan.core.IOSpec.ConnectorType.DOUBLE_BUFFER,
                     capacity=25,
                     policy=0,  # pop
                 )
-                self.add_flow(last_op, drf_sink0, {("rf_out", "rf_in")})
+                thread_pool.add(drf_sink, True)
+                self.add_flow(last_op, drf_sink, {("rf_out", "rf_in")})
             else:
-                drf_sink0 = rf_array.DigitalRFSink_sc16(
+                drf_sink = rf_array.DigitalRFSink_sc16(
                     self,
                     cuda_stream_pool,
-                    name="drf_sink0",
-                    **add_chunk_kwargs(last_chunk_shape, **self.kwargs("drf_sink0")),
+                    name=f"drf_sink{ch_idx}",
+                    **add_chunk_kwargs(
+                        last_chunk_shape, **self.kwargs(f"drf_sink{ch_idx}")
+                    ),
                 )
-                drf_sink0.spec.inputs["rf_in"].connector(
+                drf_sink.spec.inputs["rf_in"].connector(
                     holoscan.core.IOSpec.ConnectorType.DOUBLE_BUFFER,
                     capacity=25,
                     policy=0,  # pop
                 )
-                self.add_flow(last_op, drf_sink0, {("rf_out", "rf_in")})
+                thread_pool.add(drf_sink, True)
+                self.add_flow(last_op, drf_sink, {("rf_out", "rf_in")})
 
-            if self.kwargs("pipeline")["metadata0"]:
-                dmd_sink0 = DigitalMetadataSink(
+            if self.kwargs("pipeline")[f"metadata{ch_idx}"]:
+                dmd_sink = DigitalMetadataSink(
                     self,
-                    name="dmd_sink0",
-                    output_path=self.kwargs("drf_sink0")["output_path"],
-                    metadata_dir=f"{self.kwargs('drf_sink0')['channel_dir']}/metadata",
-                    subdir_cadence_secs=self.kwargs("drf_sink0")["subdir_cadence_secs"],
-                    file_cadence_secs=self.kwargs("drf_sink0")["file_cadence_millisecs"]
+                    name=f"dmd_sink{ch_idx}",
+                    output_path=self.kwargs(f"drf_sink{ch_idx}")["output_path"],
+                    metadata_dir=f"{self.kwargs(f'drf_sink{ch_idx}')['channel_dir']}/metadata",
+                    subdir_cadence_secs=self.kwargs(f"drf_sink{ch_idx}")[
+                        "subdir_cadence_secs"
+                    ],
+                    file_cadence_secs=self.kwargs(f"drf_sink{ch_idx}")[
+                        "file_cadence_millisecs"
+                    ]
                     // 1000,
-                    uuid=self.kwargs("drf_sink0")["uuid"],
+                    uuid=self.kwargs(f"drf_sink{ch_idx}")["uuid"],
                     filename_prefix="metadata",
-                    metadata=self.kwargs("metadata0"),
+                    metadata=self.kwargs(f"metadata{ch_idx}"),
                 )
-                dmd_sink0.spec.inputs["rf_in"].connector(
+                dmd_sink.spec.inputs["rf_in"].connector(
                     holoscan.core.IOSpec.ConnectorType.DOUBLE_BUFFER,
                     capacity=25,
                     policy=0,  # pop
                 )
-                self.add_flow(last_op, dmd_sink0)
+                thread_pool.add(dmd_sink, True)
+                self.add_flow(last_op, dmd_sink)
 
-        # sample flow 1
-
-        packet1_kwargs = self.kwargs("packet1")
-        net_connector_rx1 = rf_array.NetConnectorAdvanced(
-            self,
-            holoscan.conditions.PeriodicCondition(
-                self,
-                recess_period=10000000,
-                policy=holoscan.conditions.PeriodicConditionPolicy.NO_CATCH_UP_MISSED_TICKS,
-            ),
-            priority_stream_pool,
-            name="net_connector_rx1",
-            advanced_network=str(self.from_config("advanced_network")),
-            **packet1_kwargs,
-        )
-        net_connector_rx1.spec.outputs["rf_out"].condition(
-            holoscan.core.ConditionType.DOWNSTREAM_MESSAGE_AFFORDABLE,
-            min_size=packet1_kwargs.get("buffer_size", 4),
-        ).connector(
-            holoscan.core.IOSpec.ConnectorType.DOUBLE_BUFFER,
-            capacity=2 * packet1_kwargs.get("buffer_size", 4),
-            policy=0,  # pop
-        )
-        # Holoscan 3.2 doesn't support add_realtime() for thread pool, so skip for now
-        # network_thread_pool.add_realtime(
-        #     net_connector_rx1,
-        #     sched_policy=holoscan.resources.SchedulingPolicy.SCHED_RR,
-        #     pin_operator=True,
-        #     sched_priority=10,
-        # )
-
-        last_chunk_shape = (
-            self.kwargs("packet1")["num_samples"],
-            self.kwargs("packet1")["num_subchannels"],
-        )
-        last_buffer_capacity = 2 * packet1_kwargs.get("buffer_size", 4)
-        last_op = net_connector_rx1
-
-        if self.kwargs("pipeline")["selector1"]:
-            selector1 = rf_array.SubchannelSelect_sc16(
-                self, cuda_stream_pool, name="selector1", **self.kwargs("selector1")
-            )
-            selector1.spec.inputs["rf_in"].connector(
-                holoscan.core.IOSpec.ConnectorType.DOUBLE_BUFFER,
-                capacity=last_buffer_capacity,
-                policy=0,  # pop
-            )
-            self.add_flow(last_op, selector1, {("rf_out", "rf_in")})
-            last_op = selector1
-            last_buffer_capacity = 1
-            last_chunk_shape = (
-                last_chunk_shape[0],
-                len(self.kwargs("selector1")["subchannel_idx"]),
-            )
-
-        if self.kwargs("pipeline")["converter1"]:
-            converter1 = rf_array.TypeConversionComplexIntToFloat(
-                self,
-                cuda_stream_pool,
-                name="converter1",
-            )
-            converter1.spec.inputs["rf_in"].connector(
-                holoscan.core.IOSpec.ConnectorType.DOUBLE_BUFFER,
-                capacity=last_buffer_capacity,
-                policy=0,  # pop
-            )
-            self.add_flow(last_op, converter1, {("rf_out", "rf_in")})
-            last_op = converter1
-            last_buffer_capacity = 1
-
-            if self.kwargs("pipeline")["rotator1"]:
-                rotator1 = rf_array.RotatorScheduled(
-                    self, cuda_stream_pool, name="rotator1", **self.kwargs("rotator1")
-                )
-                self.add_flow(last_op, rotator1)
-                last_op = rotator1
-
-            if self.kwargs("pipeline")["resampler1"]:
-                resample_kwargs = add_chunk_kwargs(
-                    last_chunk_shape, **self.kwargs("resampler1")
-                )
-                resampler1 = rf_array.ResamplePoly(
-                    self, cuda_stream_pool, name="resampler1", **resample_kwargs
-                )
-                self.add_flow(last_op, resampler1)
-                last_op = resampler1
-                last_chunk_shape = (
-                    last_chunk_shape[0]
-                    * resample_kwargs["up"]
-                    // resample_kwargs["down"],
-                    last_chunk_shape[1],
-                )
-
-            if self.kwargs("pipeline")["spectrogram1"]:
-                spec_thread_pool1 = self.make_thread_pool("spectrogram_thread_pool1", 3)
-
-                spectrogram1 = Spectrogram(
-                    self,
-                    cuda_stream_pool,
-                    name="spectrogram1",
-                    **add_chunk_kwargs(last_chunk_shape, **self.kwargs("spectrogram1")),
-                )
-                # Queue policy is currently set by specifying a connector in setup()
-                # # drop old messages rather than get backed up by slow
-                # # downstream operators
-                # spectrogram.queue_policy(
-                #     port_name="spec_out",
-                #     port_type=holoscan.core.IOSpec.IOType.OUTPUT,
-                #     policy=holoscan.core.IOSpec.QueuePolicy.POP,
-                # )
-                spec_thread_pool1.add(spectrogram1, True)
-                self.add_flow(last_op, spectrogram1)
-
-                if self.kwargs("pipeline")["spectrogram_mqtt1"]:
-                    spec_mqtt_kwargs = self.kwargs("spectrogram_mqtt1")
-                    spec_mqtt_kwargs.update(
-                        spec_sample_cadence=spectrogram1.spec_sample_cadence,
-                    )
-                    spectrogram_mqtt1 = SpectrogramMQTT(
-                        self,
-                        ## CudaStreamCondition doesn't work with a message queue size
-                        ## larger than 1, so get by without it for now
-                        # holoscan.conditions.MessageAvailableCondition(
-                        #     self,
-                        #     receiver="spec_in",
-                        #     name="spectrogram_mqtt0_message_available",
-                        # ),
-                        # holoscan.conditions.CudaStreamCondition(
-                        #     self, receiver="spec_in", name="spectrogram_mqtt0_stream_sync"
-                        # ),
-                        # # no downstream condition, and we don't want one
-                        cuda_stream_pool,
-                        name="spectrogram_mqtt1",
-                        **spec_mqtt_kwargs,
-                    )
-                    spec_thread_pool1.add(spectrogram_mqtt1, True)
-                    self.add_flow(spectrogram1, spectrogram_mqtt1)
-
-                if self.kwargs("pipeline")["spectrogram_output1"]:
-                    spec_out_kwargs = self.kwargs("spectrogram_output1")
-                    spec_out_kwargs.update(
-                        nfft=spectrogram1.nfft,
-                        spec_sample_cadence=spectrogram1.spec_sample_cadence,
-                        num_subchannels=spectrogram1.num_subchannels,
-                        data_subdir=(
-                            f"{self.kwargs('drf_sink1')['channel_dir']}_spectrogram"
-                        ),
-                    )
-                    spectrogram_output1 = SpectrogramOutput(
-                        self,
-                        ## CudaStreamCondition doesn't work with a message queue size
-                        ## larger than 1, so get by without it for now
-                        # holoscan.conditions.MessageAvailableCondition(
-                        #     self,
-                        #     receiver="spec_in",
-                        #     name="spectrogram_output_message_available",
-                        # ),
-                        # holoscan.conditions.CudaStreamCondition(
-                        #     self, receiver="spec_in", name="spectrogram_output_stream_sync"
-                        # ),
-                        # # no downstream condition, and we don't want one
-                        cuda_stream_pool,
-                        name="spectrogram_output1",
-                        **spec_out_kwargs,
-                    )
-                    spec_thread_pool1.add(spectrogram_output1, True)
-                    self.add_flow(spectrogram1, spectrogram_output1)
-
-        if self.kwargs("pipeline")["digital_rf1"]:
-            if self.kwargs("pipeline")["converter1"]:
-                drf_sink1 = rf_array.DigitalRFSink_fc32(
-                    self,
-                    cuda_stream_pool,
-                    name="drf_sink1",
-                    **add_chunk_kwargs(last_chunk_shape, **self.kwargs("drf_sink1")),
-                )
-                drf_sink1.spec.inputs["rf_in"].connector(
-                    holoscan.core.IOSpec.ConnectorType.DOUBLE_BUFFER,
-                    capacity=25,
-                    policy=0,  # pop
-                )
-                self.add_flow(last_op, drf_sink1, {("rf_out", "rf_in")})
-            else:
-                drf_sink1 = rf_array.DigitalRFSink_sc16(
-                    self,
-                    cuda_stream_pool,
-                    name="drf_sink1",
-                    **add_chunk_kwargs(last_chunk_shape, **self.kwargs("drf_sink1")),
-                )
-                drf_sink1.spec.inputs["rf_in"].connector(
-                    holoscan.core.IOSpec.ConnectorType.DOUBLE_BUFFER,
-                    capacity=25,
-                    policy=0,  # pop
-                )
-                self.add_flow(last_op, drf_sink1, {("rf_out", "rf_in")})
-
-            if self.kwargs("pipeline")["metadata1"]:
-                dmd_sink1 = DigitalMetadataSink(
-                    self,
-                    name="dmd_sink1",
-                    output_path=self.kwargs("drf_sink1")["output_path"],
-                    metadata_dir=f"{self.kwargs('drf_sink1')['channel_dir']}/metadata",
-                    subdir_cadence_secs=self.kwargs("drf_sink1")["subdir_cadence_secs"],
-                    file_cadence_secs=self.kwargs("drf_sink1")["file_cadence_millisecs"]
-                    // 1000,
-                    uuid=self.kwargs("drf_sink1")["uuid"],
-                    filename_prefix="metadata",
-                    metadata=self.kwargs("metadata1"),
-                )
-                dmd_sink1.spec.inputs["rf_in"].connector(
-                    holoscan.core.IOSpec.ConnectorType.DOUBLE_BUFFER,
-                    capacity=25,
-                    policy=0,  # pop
-                )
-                self.add_flow(last_op, dmd_sink1)
+    def compose(self):
+        for ch_idx in range(2):
+            self.add_channel_flow(ch_idx)
 
 
 def main():
