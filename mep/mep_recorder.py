@@ -27,7 +27,6 @@ import typing
 import holoscan
 import jsonargparse
 import matplotlib as mpl
-import msgspec
 from holohub import basic_network, rf_array
 from holohub.rf_array.digital_metadata import DigitalMetadataSink
 from holohub.rf_array.params import (
@@ -152,22 +151,19 @@ class RecorderParser(jsonargparse.ArgumentParser):
                 args += (ch0_alias,)
         return super().add_argument(*args, **kwargs)
 
-
-class RecorderActionConfigFile(jsonargparse.ActionConfigFile):
-    """Config file action handling aliased arguments for ch0"""
-
-    def __call__(self, parser, cfg, values, option_string=None):
-        try:
-            cfg_path = pathlib.Path(values)
-        except Exception:
-            pass
+    def _apply_actions(self, cfg, *args, **kwargs):
+        # this intercepts configs parsed into a dict from a string (e.g. json, yaml,
+        # or a file with those) and moves top-level channel arguments to "ch0"
+        if len(args) > 0:
+            parent_key = args[0]
+            args = args[1:]
         else:
-            cfg_text = cfg_path.read_text()
-            cfg_dict = msgspec.yaml.decode(cfg_text)
+            parent_key = kwargs.pop("parent_key", "")
+        if parent_key == "" and isinstance(cfg, dict):
             # rewrite config to put top-level channel arguments under "ch0"
             out_dict = {}
-            out_dict["ch0"] = cfg_dict.pop("ch0", {})
-            for k, v in cfg_dict.items():
+            out_dict["ch0"] = cfg.pop("ch0", {})
+            for k, v in cfg.items():
                 if k in (
                     "basic_network",
                     "drf_sink",
@@ -187,8 +183,8 @@ class RecorderActionConfigFile(jsonargparse.ActionConfigFile):
                     out_dict["ch0"][k] = v
                 else:
                     out_dict[k] = v
-            values = msgspec.yaml.encode(out_dict).decode()
-        return super().__call__(parser, cfg, values, option_string=option_string)
+            cfg = out_dict
+        return super()._apply_actions(cfg, parent_key, *args, **kwargs)
 
 
 def build_config_parser():
@@ -198,7 +194,7 @@ def build_config_parser():
         default_env=True,
     )
     # special config argument to load from yaml file
-    parser.add_argument("--config", action=RecorderActionConfigFile)
+    parser.add_argument("--config", action="config")
     # operator arguments
     parser.add_class_arguments(SchedulerParams, "scheduler")
 
