@@ -731,7 +731,7 @@ def main():
             parser.dump(
                 cfg,
                 format="yaml",
-                skip_none=True,
+                skip_unset=True,
                 skip_default=False,
                 skip_link_targets=False,
             )
