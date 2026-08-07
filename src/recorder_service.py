@@ -1,5 +1,6 @@
 import dataclasses
 import functools
+import itertools
 import logging
 import operator
 import os
@@ -254,7 +255,7 @@ async def run_recorder(client, service):
     ]
     with anyio.CancelScope() as scope:
         service.recording_scope = scope
-        clear_ram_ringbuffer(service)
+        clear_ringbuffers(service)
         await send_status(client, service)
         async with await anyio.open_process(
             command, stdout=None, stderr=None
@@ -265,7 +266,7 @@ async def run_recorder(client, service):
                 if process.returncode is None:
                     # process is still running, stop it gracefully
                     process.send_signal(signal.SIGINT)
-                clear_ram_ringbuffer(service)
+                clear_ringbuffers(service)
                 service.recording_enabled = False
                 service.recording_scope = None
                 with anyio.CancelScope(shield=True):
@@ -273,8 +274,10 @@ async def run_recorder(client, service):
                     await send_status(client, service)
 
 
-def clear_ram_ringbuffer(sevice):
-    for item in service.ram_ringbuffer_path.rglob("*"):
+def clear_ringbuffers(sevice):
+    for item in itertools.chain(
+        service.ram_ringbuffer_path.rglob("*"), service.tmp_ringbuffer_path.rglob("*")
+    ):
         try:
             if item.is_dir():
                 shutil.rmtree(item, ignore_errors=True)
