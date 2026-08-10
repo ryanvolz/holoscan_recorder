@@ -419,6 +419,7 @@ class App(holoscan.core.Application):
                 policy=holoscan.conditions.PeriodicConditionPolicy.NO_CATCH_UP_MISSED_TICKS,
             ),
             name=f"{ch}_basic_network_rx",
+            start_delay_ms=ch_kwargs["packet"].get("start_delay_ms", 2000),
             **ch_kwargs["basic_network"],
         )
         basic_net_rx.spec.outputs["burst_out"].condition(
@@ -438,6 +439,9 @@ class App(holoscan.core.Application):
         )
 
         packet_kwargs = ch_kwargs["packet"]
+        # delay specified as part of packet config, but applied to basic_net_rx above
+        if "start_delay_ms" in packet_kwargs:
+            del packet_kwargs["start_delay_ms"]
         net_connector_rx = rf_array.NetConnectorBasic(
             self,
             holoscan.conditions.PeriodicCondition(
