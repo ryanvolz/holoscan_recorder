@@ -241,7 +241,7 @@ def build_channel_subparser(parser, ch):
             freq_idx_scaling=1000,
             freq_idx_offset=0,
             apply_conjugate=False,
-            start_delay_ms=2000,
+            start_delay_ms=1000,
             spoof_header=False,
             packet_skip_bytes=64,
             header_metadata={
@@ -417,10 +417,10 @@ class App(holoscan.core.Application):
             holoscan.conditions.PeriodicCondition(
                 self,
                 recess_period=10000000,
-                policy=holoscan.conditions.PeriodicConditionPolicy.NO_CATCH_UP_MISSED_TICKS,
+                policy=holoscan.conditions.PeriodicConditionPolicy.CATCH_UP_MISSED_TICKS,
             ),
             name=f"{ch}_basic_network_rx",
-            start_delay_ms=ch_kwargs["packet"].get("start_delay_ms", 2000),
+            start_delay_ms=ch_kwargs["packet"].get("start_delay_ms", 1000),
             **ch_kwargs["basic_network"],
         )
         basic_net_rx.spec.outputs["burst_out"].condition(
@@ -448,7 +448,7 @@ class App(holoscan.core.Application):
             holoscan.conditions.PeriodicCondition(
                 self,
                 recess_period=10000000,
-                policy=holoscan.conditions.PeriodicConditionPolicy.NO_CATCH_UP_MISSED_TICKS,
+                policy=holoscan.conditions.PeriodicConditionPolicy.CATCH_UP_MISSED_TICKS,
             ),
             priority_stream_pool,
             name=f"{ch}_net_connector_rx",
