@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 # SPDX-FileCopyrightText: Copyright (c) 2025 Massachusetts Institute of Technology
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -31,7 +29,6 @@ import warnings
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 
-# ruff: disable[E402]
 import cupy as cp
 import cupyx
 import cupyx.scipy.signal as cpss
@@ -45,8 +42,6 @@ import paho.mqtt.client as mqtt
 from holohub import rf_array
 from jsonargparse.typing import PositiveInt
 
-# ruff: enable[E402]
-
 mpl.use("agg")
 
 # DO NOT use async pool, get more stable memory use with default pool
@@ -55,6 +50,15 @@ mpl.use("agg")
 # cp.cuda.set_allocator(mempool.malloc)
 mempool = cp.get_default_memory_pool()
 pinned_mempool = cp.get_default_pinned_memory_pool()
+
+# Define a custom CuPy kernel to get the squared magnitide of a complex array
+# (this is significantly faster than e.g. x.real**2 + x.imag**2)
+squared_mag_complex64 = cp.ElementwiseKernel(
+    "complex64 x",
+    "float32 y",
+    "y = x.real() * x.real() + x.imag() * x.imag()",
+    "squared_mag_complex64",
+)
 
 
 def timestamp_floor(nsamples, sample_rate_frac):
@@ -96,25 +100,21 @@ class SpecMsg:
 class SpectrogramParams:
     """Spectrogram parameters"""
 
-    chunk_size: typing.Optional[PositiveInt] = None
+    chunk_size: PositiveInt | None = None
     """Number of samples in an RFArray chunk of data"""
-    num_subchannels: typing.Optional[PositiveInt] = None
+    num_subchannels: PositiveInt | None = None
     """Number of subchannels contained in the RFArray data"""
     window: str = "hann"
     """Window function to apply before taking FFT"""
     nperseg: PositiveInt = 1024
     """Length of each segment of samples on which to calculate a spectrum"""
-    noverlap: typing.Optional[PositiveInt] = None
+    noverlap: PositiveInt | None = None
     """Number of samples to overlap between segments. If None, `noverlap = nperseg // 2`"""
-    nfft: typing.Optional[PositiveInt] = None
+    nfft: PositiveInt | None = None
     """Length of FFT used per segment. If None, `nfft = nperseg`"""
-    detrend: typing.Union[
-        typing.Literal["linear"], typing.Literal["constant"], typing.Literal[False]
-    ] = False
+    detrend: typing.Literal["linear", "constant", False] = False
     """Specifies how to detrend each segment. ["constant", "linear", or False]"""
-    reduce_op: typing.Union[
-        typing.Literal["max"], typing.Literal["median"], typing.Literal["mean"]
-    ] = "max"
+    reduce_op: typing.Literal["max", "median", "mean"] = "max"
     """Operation to use to reduce segment spectra to one result per chunk. ["max", "median", or "mean"]"""
     num_spectra_per_chunk: PositiveInt = 1
     """Number of spectra samples to calculate per chunk of data. Must evenly divide `chunk_size`."""
@@ -125,14 +125,10 @@ class Spectrogram(holoscan.core.Operator):
     num_subchannels: int
     window: str
     nperseg: int
-    noverlap: typing.Optional[int]
-    nfft: typing.Optional[int]
-    detrend: typing.Union[
-        typing.Literal["linear"], typing.Literal["constant"], typing.Literal[False]
-    ]
-    reduce_op: typing.Union[
-        typing.Literal["max"], typing.Literal["median"], typing.Literal["mean"]
-    ]
+    noverlap: int | None
+    nfft: int | None
+    detrend: typing.Literal["linear", "constant", False]
+    reduce_op: typing.Literal["max", "median", "mean"]
     num_spectra_per_chunk: int
     spec_sample_cadence: int
 
@@ -262,9 +258,7 @@ class Spectrogram(holoscan.core.Operator):
             return
         stream_ptr = op_input.receive_cuda_stream("rf_in", allocate=True)
         stream = cp.cuda.ExternalStream(stream_ptr)
-        # ensure that deallocation of rf_arr.data (when it is destroyed at end of
-        # compute() call) occurs on this stream after computation is done
-        rf_arr.set_deallocation_stream(stream_ptr)
+        input_stream_ptr = op_input.receive_cuda_streams("rf_in")[0]
 
         rf_metadata = rf_arr.metadata
 
@@ -274,11 +268,20 @@ class Spectrogram(holoscan.core.Operator):
         self.logger.debug(msg)
 
         try:
-            rf_data = cp.from_dlpack(rf_arr.data)
+            rf_data_nocopy = cp.from_dlpack(rf_arr.data)
         except Exception:
             msg = "Failed to convert data to CuPy array, skipping"
             self.logger.exception(msg)
             return
+
+        # copy rf_data and then synchronize input stream to operator stream to ensure
+        # that deallocation of rf_arr.data (when it is destroyed at the end of the
+        # compute() call) happens on the input stream as soon as possible *after* we
+        # have what we need to continue the computation asynchronously
+        with stream:
+            rf_data = cp.array(rf_data_nocopy, copy=True, blocking=False)
+        context.synchronize_streams([stream.ptr], input_stream_ptr)
+
         for spec_count, (spec, event) in enumerate(
             self.calc_spectrogram_chunk(rf_data, stream)
         ):
@@ -363,7 +366,7 @@ class Spectrogram(holoscan.core.Operator):
             # Zxx shape is (num_spectra_per_chunk, num_subchannels, nfft, ntime)
             # reduce over time (last) axis, fftshift freq (last after reduction) axis
             spec = cp.fft.fftshift(
-                self.reduce_op(Zxx.real**2 + Zxx.imag**2, axis=-1), axes=-1
+                self.reduce_op(squared_mag_complex64(Zxx), axis=-1), axes=-1
             )
             # graph = self._capture_stream.end_capture()
 
@@ -388,13 +391,13 @@ class Spectrogram(holoscan.core.Operator):
 class SpectrogramMQTTParams:
     """Spectrogram MQTT output parameters"""
 
-    spec_sample_cadence: typing.Optional[PositiveInt] = None
+    spec_sample_cadence: PositiveInt | None = None
     """Number of RF samples that go into each spectrum input chunk"""
     input_buffer_capacity: PositiveInt = 10
     """Size of the input buffer, > 1 so upstream operator is not held up"""
     service_name: str = "recorder_fft"
     """Service name to use when publishing over MQTT"""
-    node_id: typing.Optional[str] = None
+    node_id: str | None = None
     """Identifier (e.g. MAC address) for this node when publishing over MQTT"""
     status_topic: str = "{service_name}/status"
     """MQTT topic for publishing status. Can contain format identifiers
@@ -641,11 +644,11 @@ class SpectrogramMQTT(holoscan.core.Operator):
 class SpectrogramOutputParams:
     """Spectrogram output parameters"""
 
-    nfft: typing.Optional[PositiveInt] = None
+    nfft: PositiveInt | None = None
     """Number of frequency samples in the spectrogram"""
-    spec_sample_cadence: typing.Optional[PositiveInt] = None
+    spec_sample_cadence: PositiveInt | None = None
     """Number of RF samples that go into each spectrum input chunk"""
-    num_subchannels: typing.Optional[PositiveInt] = None
+    num_subchannels: PositiveInt | None = None
     """Number of subchannels contained in the spectrogram data"""
     output_path: os.PathLike = pathlib.Path(".")
     """Parent directory for writing output files"""
@@ -959,7 +962,7 @@ class SpectrogramOutput(holoscan.core.Operator):
         self.logger.info(f"Outputting spectrogram for time {spec_start_dt}")
 
         num_retries = 3
-        for retry in range(0, num_retries):
+        for retry in range(num_retries):
             try:
                 self.dmd_writer.write(
                     [int(output_sample_idx[0])],
@@ -978,7 +981,7 @@ class SpectrogramOutput(holoscan.core.Operator):
                         }
                     ],
                 )
-            except IOError:
+            except OSError:
                 if retry == (num_retries - 1):
                     self.logger.warning(traceback.format_exc())
             else:
