@@ -241,6 +241,7 @@ def build_channel_subparser(parser, ch):
             freq_idx_scaling=1000,
             freq_idx_offset=0,
             apply_conjugate=False,
+            start_delay_ms=2000,
             spoof_header=False,
             packet_skip_bytes=64,
             header_metadata={
