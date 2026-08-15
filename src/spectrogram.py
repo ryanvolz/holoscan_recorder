@@ -221,22 +221,35 @@ class Spectrogram(holoscan.core.Operator):
     def initialize(self):
         self.logger.debug(f"Initializing {self.name} operator")
 
-        # Using capture and graph seems broken for now, causing access
-        # to deallocated memory when run with compute-sanitizer.
-        # So disable this for now.
-        # self._capture_stream = cp.cuda.Stream(non_blocking=True)
+        # stored capture graph for reusable spectrogram calculation
+        self.spec_graph = None
 
     def start(self):
         self.logger.debug(f"Starting {self.name} operator")
         stream_ptr = self.execution_context.allocate_cuda_stream("_internal")
         stream = cp.cuda.ExternalStream(stream_ptr)
 
-        # get device array for window ahead of time so we don't need to do a host
-        # to device transfer for every spectrogram to get the window array
         with stream:
+            # get device array for window ahead of time so we don't need to do a host
+            # to device transfer for every spectrogram to get the window array
             self.window = cpss.get_window(self.window_str, self.nperseg)
 
-        # warm up CUDA calculation to force one-time overheads into init
+            # device storage for incoming rf data that we reuse in a computation graph
+            self.rf_chunks = cp.empty(
+                (
+                    self.num_spectra_per_chunk,
+                    self.num_subchannels,
+                    self.chunk_size // self.num_spectra_per_chunk,
+                ),
+                dtype="complex64",
+            )
+            # device storage for output spectrogram that we reuse in a computation graph
+            self.out_spec = cp.empty(
+                (self.num_spectra_per_chunk, self.num_subchannels, self.nfft),
+                dtype="float32",
+            )
+
+        # warm up CUDA calculation to force one-time overheads into start
         # so we don't spend an extra long time in the first compute call
         # and delay other operators
         for _spec in self.calc_spectrogram_chunk(
@@ -268,22 +281,18 @@ class Spectrogram(holoscan.core.Operator):
         self.logger.debug(msg)
 
         try:
-            rf_data_nocopy = cp.from_dlpack(rf_arr.data)
+            rf_data = cp.from_dlpack(rf_arr.data)
         except Exception:
             msg = "Failed to convert data to CuPy array, skipping"
             self.logger.exception(msg)
             return
 
-        # copy rf_data and then synchronize input stream to operator stream to ensure
-        # that deallocation of rf_arr.data (when it is destroyed at the end of the
-        # compute() call) happens on the input stream as soon as possible *after* we
-        # have what we need to continue the computation asynchronously
-        with stream:
-            rf_data = cp.array(rf_data_nocopy, copy=True, blocking=False)
-        context.synchronize_streams([stream.ptr], input_stream_ptr)
+        post_copy_callback = lambda: context.synchronize_streams(
+            [stream.ptr], input_stream_ptr
+        )
 
         for spec_count, (spec, event) in enumerate(
-            self.calc_spectrogram_chunk(rf_data, stream)
+            self.calc_spectrogram_chunk(rf_data, stream, post_copy_callback)
         ):
             sample_idx = rf_metadata.sample_idx + spec_count * self.spec_sample_cadence
             spec_metadata = rf_array.RFMetadata(
@@ -301,7 +310,7 @@ class Spectrogram(holoscan.core.Operator):
             )
             op_output.emit(out_message, "spec_out", "PyObject")
 
-    def calc_spectrogram_chunk(self, rf_data, stream=None):
+    def calc_spectrogram_chunk(self, rf_data, stream=None, post_copy_callback=None):
         if stream is None:
             stream = cp.cuda.get_current_stream()
         # get pinned host memory for output so copy can run asynchronously
@@ -324,7 +333,7 @@ class Spectrogram(holoscan.core.Operator):
         # break rf_data into chunks and transpose so we have shape
         # (num_spectra_per_chunk, num_subchannels, chunk_size // num_spectra_per_chunk)
         # and can take FFT over the last axis
-        spectrum_chunks = rf_data.reshape(
+        rf_chunks = rf_data.reshape(
             (
                 self.num_spectra_per_chunk,
                 self.chunk_size // self.num_spectra_per_chunk,
@@ -332,53 +341,65 @@ class Spectrogram(holoscan.core.Operator):
             )
         ).transpose((0, 2, 1))
 
-        # Using capture and graph seems broken for now, causing access
-        # to deallocated memory when run with compute-sanitizer.
-        # So disable this for now.
-        # capture GPU operations into a graph, which can be optimized and launched
-        # with self._capture_stream:
-        # self._capture_stream.begin_capture()
+        # Copy data into pre-allocated memory that we run the computation graph on.
+        # Also, synchronize input stream to operator stream to ensure
+        # that deallocation of rf_arr.data (when it is destroyed at the end of the
+        # compute() call) happens on the input stream as soon as possible *after* we
+        # have what we need to continue the computation asynchronously
         with stream:
-            with self.cufft_plan as plan:
-                _freqs, _sidxs, Zxx = cpss.stft(
-                    spectrum_chunks,
-                    fs=1,
-                    window=self.window,
-                    nperseg=self.nperseg,
-                    noverlap=self.noverlap,
-                    nfft=self.nfft,
-                    detrend=self.detrend,
-                    return_onesided=False,
-                    boundary=None,
-                    padded=False,
-                    axis=-1,
-                    scaling="spectrum",
+            cp.copyto(self.rf_chunks, rf_chunks)
+        if post_copy_callback is not None:
+            post_copy_callback()
+
+        if self.spec_graph is None:
+            with cp.cuda.Stream(non_blocking=True) as capture_stream:
+                # capture GPU operations into a graph, which can be optimized and launched
+                capture_stream.begin_capture()
+                with self.cufft_plan as plan:
+                    _freqs, _sidxs, Zxx = cpss.stft(
+                        self.rf_chunks,
+                        fs=1,
+                        window=self.window,
+                        nperseg=self.nperseg,
+                        noverlap=self.noverlap,
+                        nfft=self.nfft,
+                        detrend=self.detrend,
+                        return_onesided=False,
+                        boundary=None,
+                        padded=False,
+                        axis=-1,
+                        scaling="spectrum",
+                    )
+                    # extract FFT plan for next time if we didn't have one this time
+                    # (plan cache never hits otherwise, and a new plan would always be created)
+                    if plan is None:
+                        plan_cache = cp.fft.config.get_plan_cache()
+                        # most recently used plan is the first in the cache when iterating,
+                        # which is the one we want to save for re-use with this operator
+                        for key, node in plan_cache:
+                            self.cufft_plan = node.plan
+                            break
+                # Zxx shape is (num_spectra_per_chunk, num_subchannels, nfft, ntime)
+                # reduce over time (last) axis, fftshift freq (last after reduction) axis
+                spec = cp.fft.fftshift(
+                    self.reduce_op(squared_mag_complex64(Zxx), axis=-1), axes=-1
                 )
-                # extract FFT plan for next time if we didn't have one this time
-                # (plan cache never hits otherwise, and a new plan would always be created)
-                if plan is None:
-                    plan_cache = cp.fft.config.get_plan_cache()
-                    # most recently used plan is the first in the cache when iterating,
-                    # which is the one we want to save for re-use with this operator
-                    for key, node in plan_cache:
-                        self.cufft_plan = node.plan
-                        break
-            # Zxx shape is (num_spectra_per_chunk, num_subchannels, nfft, ntime)
-            # reduce over time (last) axis, fftshift freq (last after reduction) axis
-            spec = cp.fft.fftshift(
-                self.reduce_op(squared_mag_complex64(Zxx), axis=-1), axes=-1
+                # copy result into pre-allocated memory
+                cp.copyto(self.out_spec, spec)
+                self.spec_graph = capture_stream.end_capture()
+
+        # launch the graph which operates on self.rf_chunks and outputs into spec_pinned
+        self.spec_graph.launch(stream=stream)
+
+        if self.logger.isEnabledFor(logging.DEBUG):
+            msg = (
+                f"Mempool at launch of {self.name} computation graph: "
+                f"{mempool.used_bytes()} used / {mempool.total_bytes()} total bytes"
             )
-            # graph = self._capture_stream.end_capture()
+            self.logger.debug(msg)
 
-        msg = (
-            f"Mempool at launch of {self.name} computation graph: "
-            f"{mempool.used_bytes()} used / {mempool.total_bytes()} total bytes"
-        )
-        self.logger.debug(msg)
-
-        # graph.launch(stream=stream)
         # copy result into (host-pinned) numpy array
-        host_spec = spec.get(stream=stream, out=spec_pinned, blocking=False)
+        host_spec = self.out_spec.get(stream=stream, out=spec_pinned, blocking=False)
         event = cp.cuda.Event(block=True, disable_timing=True, interprocess=True)
         stream.record(event)
 
