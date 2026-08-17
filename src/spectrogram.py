@@ -88,8 +88,8 @@ def timestamp_floor(nsamples, sample_rate_frac):
 class SpecMsg:
     """Spectrogram message emitted / received by the spectrogram operators"""
 
-    spec: holoscan.core.Tensor
-    """Spectrogram data tensor, C-contiguous with shape (num_subchannels, nfft)"""
+    spec: np.ndarray
+    """Spectrogram data array, C-contiguous with shape (num_subchannels, nfft)"""
     metadata: rf_array.RFMetadata
     """Metadata from the corresponding RFArray"""
     event: cp.cuda.Event
@@ -204,7 +204,8 @@ class Spectrogram(holoscan.core.Operator):
         self.num_spectra_per_chunk = num_spectra_per_chunk
         self.spec_sample_cadence = self.chunk_size // self.num_spectra_per_chunk
 
-        # plan will be initialized on first compute(), use null context until then
+        self.compute_counter = 0
+        # plan will be initialized on first start(), use null context until then
         self.cufft_plan = contextlib.nullcontext()
 
         super().__init__(fragment, *args, **kwargs)
@@ -223,11 +224,14 @@ class Spectrogram(holoscan.core.Operator):
 
         # stored capture graph for reusable spectrogram calculation
         self.spec_graph = None
+        self.graph_mempool = cp.cuda.MemoryPool()
+        self.graph_mempool.set_limit(0)  # unlimited, never return memory
 
     def start(self):
         self.logger.debug(f"Starting {self.name} operator")
         stream_ptr = self.execution_context.allocate_cuda_stream("_internal")
         stream = cp.cuda.ExternalStream(stream_ptr)
+        self.stream = stream
 
         with stream:
             # get device array for window ahead of time so we don't need to do a host
@@ -242,11 +246,6 @@ class Spectrogram(holoscan.core.Operator):
                     self.chunk_size // self.num_spectra_per_chunk,
                 ),
                 dtype="complex64",
-            )
-            # device storage for output spectrogram that we reuse in a computation graph
-            self.out_spec = cp.empty(
-                (self.num_spectra_per_chunk, self.num_subchannels, self.nfft),
-                dtype="float32",
             )
 
         # warm up CUDA calculation to force one-time overheads into start
@@ -264,6 +263,18 @@ class Spectrogram(holoscan.core.Operator):
         op_output: holoscan.core.OutputContext,
         context: holoscan.core.ExecutionContext,
     ):
+        # **IMPORTANT**: CuPy seems to do some cleanup only when a stream is
+        # synchronized, and without it kernel launches will start to take longer
+        # and longer until eventually we end up dropping samples. We don't want to
+        # synchronize after queueing up the GPU computations because we want to return
+        # quickly to clear the input buffer and allow upstream operators to continue.
+        # So, the best place to synchronize is right at the start here, even before the
+        # input is received so that we only wait for prior work on the stream to finish
+        # and not additionally wait on upstream streams to have their work ready.
+        self.compute_counter = (self.compute_counter + 1) % 100
+        if self.compute_counter == 0:
+            self.stream.synchronize()
+
         # We only process one input in this compute because we want the outputs emitted
         # as soon as possible to minimize latency and let downstream operators work.
         rf_arr = op_input.receive("rf_in")
@@ -302,9 +313,7 @@ class Spectrogram(holoscan.core.Operator):
                 rf_metadata.center_freq,
             )
             out_message = SpecMsg(
-                # cast to Holoscan Tensor so it is passed without data copy
-                # allowing emit before the stream is synced
-                spec=holoscan.as_tensor(spec),
+                spec=spec,
                 metadata=spec_metadata,
                 event=event,
             )
@@ -351,8 +360,16 @@ class Spectrogram(holoscan.core.Operator):
         if post_copy_callback is not None:
             post_copy_callback()
 
+        # CAUTION: using a computation graph is subtly broken in that it considers
+        # all of the memory allocated from the mempool to be "free" after this returns,
+        # meanining it could be released back to the OS at any time and then using it
+        # will result in a segmentation fault. We can get away with it if the memory
+        # is kept in the mempool and never reused or returned to the OS.
         if self.spec_graph is None:
-            with cp.cuda.Stream(non_blocking=True) as capture_stream:
+            with (
+                cp.cuda.using_allocator(self.graph_mempool.malloc),
+                cp.cuda.Stream(non_blocking=True) as capture_stream,
+            ):
                 # capture GPU operations into a graph, which can be optimized and launched
                 capture_stream.begin_capture()
                 with self.cufft_plan as plan:
@@ -381,11 +398,9 @@ class Spectrogram(holoscan.core.Operator):
                             break
                 # Zxx shape is (num_spectra_per_chunk, num_subchannels, nfft, ntime)
                 # reduce over time (last) axis, fftshift freq (last after reduction) axis
-                spec = cp.fft.fftshift(
+                self.out_spec = cp.fft.fftshift(
                     self.reduce_op(squared_mag_complex64(Zxx), axis=-1), axes=-1
                 )
-                # copy result into pre-allocated memory
-                cp.copyto(self.out_spec, spec)
                 self.spec_graph = capture_stream.end_capture()
 
         # launch the graph which operates on self.rf_chunks and outputs into spec_pinned
@@ -568,7 +583,6 @@ class SpectrogramMQTT(holoscan.core.Operator):
         #  operator does not slow down upstream operators)
         spec_ready_event = spec_message.event
         spec_ready_event.synchronize()
-        del spec_ready_event
 
         # spec_arr is C-contiguous with shape (num_subchannels, nfft)
         try:
@@ -895,7 +909,6 @@ class SpectrogramOutput(holoscan.core.Operator):
         #  operator does not slow down upstream operators)
         spec_ready_event = spec_message.event
         spec_ready_event.synchronize()
-        del spec_ready_event
 
         # spec_arr is C-contiguous with shape (num_subchannels, nfft)
         try:
@@ -1058,9 +1071,8 @@ class SpectrogramOutput(holoscan.core.Operator):
         # track that we just wrote a sample
         self.last_written_sample_idx = sample_idx
 
-        # free memory now since writing output can bloat input buffer and
-        # this seems to help keep long-term memory use down
-        mempool.free_all_blocks()
+        # free pinned memory now since writing output can bloat input buffer and this
+        # seems to help keep long-term memory use (pinned memory never freed otherwise)
         pinned_mempool.free_all_blocks()
 
     def stop(self):
