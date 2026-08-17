@@ -23,6 +23,7 @@ import logging
 import os
 import pathlib
 import socket
+import threading
 import traceback
 import typing
 import warnings
@@ -131,6 +132,8 @@ class Spectrogram(holoscan.core.Operator):
     reduce_op: typing.Literal["max", "median", "mean"]
     num_spectra_per_chunk: int
     spec_sample_cadence: int
+
+    _graph_lock = threading.Lock()
 
     def __init__(
         self,
@@ -367,6 +370,7 @@ class Spectrogram(holoscan.core.Operator):
         # is kept in the mempool and never reused or returned to the OS.
         if self.spec_graph is None:
             with (
+                self._graph_lock,
                 cp.cuda.using_allocator(self.graph_mempool.malloc),
                 cp.cuda.Stream(non_blocking=True) as capture_stream,
             ):
