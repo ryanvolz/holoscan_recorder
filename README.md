@@ -22,33 +22,73 @@ docker compose exec recorder bash
 4. Run the recorder script with nsys profile:
 
 ```
-HOLOSCAN_ENABLE_PROFILE=1 nsys profile --trace=cuda,nvtx,osrt --cudabacktrace=all --duration=60 python3 /app/vsword_recorder.py --config /config/survey.yaml --ram_ringbuffer_path . --output_path /data/ringbuffer
+HOLOSCAN_ENABLE_PROFILE=1 nsys profile --trace=cuda,nvtx,osrt --cudabacktrace=all --cuda-memory-usage=true --duration=60 python3 /app/vsword_recorder.py --config /config/survey.yaml --ram_ringbuffer_path . --output_path /data/ringbuffer
 ```
 
-## Debugging with cuda-gdb
+## Analyzing with compute-sanitizer
 
-0. User needs to be in `debug` group and container needs capability `SYS_PTRACE`. See `cap_add` and `group_add` docker compose options.
+0. This only seems to work when run as the root user, perhaps even requiring
+```
+privileged: true
+security_opt:
+  - seccomp=unconfined
+```
+for the Docker container.
 
-1. Enter a running docker container:
+1. Enter a running docker container as root:
 
 ```
 docker compose exec -u root recorder bash
 ```
 
-2. Install cuda-gdb:
+2. Install cuda-sanitizer:
+
+```
+apt update
+apt install cuda-sanitizer-12-2
+```
+
+3. Run the recorder script with compute-sanitizer:
+
+```
+compute-sanitizer --log-file sanitizer.log --tool memcheck --target-processes all --leak-check full --track-stream-ordered-races all --padding 64 timeout 90s python3 /app/vsword_recorder.py --config /config/survey.yaml --ram_ringbuffer_path . --output_path /data/ringbuffer
+```
+
+## Debugging with cuda-gdb
+
+See also https://docs.nvidia.com/holoscan/sdk-user-guide/using-the-sdk/debugging#enabling-core-dump.
+
+0. User needs to be in `debug` group and container needs capability `SYS_PTRACE`. See `cap_add` and `group_add` docker compose options.
+
+1. From the host, make sure that core dumps are set to go somewhere that a docker container can write to, like
+```
+echo /tmp/core.%u.%p | sudo tee /proc/sys/kernel/core_pattern
+```
+Restart any docker containers:
+```
+docker compose down && docker compose up -d
+```
+
+2. Enter a running docker container:
+
+```
+docker compose exec -u root recorder bash
+```
+
+3. Install cuda-gdb:
 
 ```
 apt update
 apt install cuda-gdb-12-2
 ```
 
-3. Re-enter the runner docker container as normal user:
+4. Re-enter the runner docker container as normal user:
 
 ```
 docker compose exec recorder bash
 ```
 
-4. Run the recorder script with CUDA_DEVICE_WAITS_ON_EXCEPTION=1 and attach later:
+5. Run the recorder script with CUDA_DEVICE_WAITS_ON_EXCEPTION=1 and attach later:
 
 ```
 CUDA_DEVICE_WAITS_ON_EXCEPTION=1 python3 /app/vsword_recorder.py --config /config/survey.yaml --ram_ringbuffer_path . --output_path /data/ringbuffer

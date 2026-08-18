@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 # SPDX-FileCopyrightText: Copyright (c) 2025 Massachusetts Institute of Technology
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -25,13 +23,13 @@ import logging
 import os
 import pathlib
 import socket
+import threading
 import traceback
 import typing
 import warnings
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 
-# ruff: disable[E402]
 import cupy as cp
 import cupyx
 import cupyx.scipy.signal as cpss
@@ -45,12 +43,23 @@ import paho.mqtt.client as mqtt
 from holohub import rf_array
 from jsonargparse.typing import PositiveInt
 
-# ruff: enable[E402]
-
 mpl.use("agg")
 
+# DO NOT use async pool, get more stable memory use with default pool
 # use asynchronous stream ordered memory
-cp.cuda.set_allocator(cp.cuda.MemoryAsyncPool().malloc)
+# mempool = cp.cuda.MemoryAsyncPool()
+# cp.cuda.set_allocator(mempool.malloc)
+mempool = cp.get_default_memory_pool()
+pinned_mempool = cp.get_default_pinned_memory_pool()
+
+# Define a custom CuPy kernel to get the squared magnitide of a complex array
+# (this is significantly faster than e.g. x.real**2 + x.imag**2)
+squared_mag_complex64 = cp.ElementwiseKernel(
+    "complex64 x",
+    "float32 y",
+    "y = x.real() * x.real() + x.imag() * x.imag()",
+    "squared_mag_complex64",
+)
 
 
 def timestamp_floor(nsamples, sample_rate_frac):
@@ -77,28 +86,36 @@ def timestamp_floor(nsamples, sample_rate_frac):
 
 
 @dataclasses.dataclass
+class SpecMsg:
+    """Spectrogram message emitted / received by the spectrogram operators"""
+
+    spec: np.ndarray
+    """Spectrogram data array, C-contiguous with shape (num_subchannels, nfft)"""
+    metadata: rf_array.RFMetadata
+    """Metadata from the corresponding RFArray"""
+    event: cp.cuda.Event
+    """Event indicating when the `spec` result is ready and can be used"""
+
+
+@dataclasses.dataclass
 class SpectrogramParams:
     """Spectrogram parameters"""
 
-    chunk_size: typing.Optional[PositiveInt] = None
+    chunk_size: PositiveInt | None = None
     """Number of samples in an RFArray chunk of data"""
-    num_subchannels: typing.Optional[PositiveInt] = None
+    num_subchannels: PositiveInt | None = None
     """Number of subchannels contained in the RFArray data"""
     window: str = "hann"
     """Window function to apply before taking FFT"""
     nperseg: PositiveInt = 1024
     """Length of each segment of samples on which to calculate a spectrum"""
-    noverlap: typing.Optional[PositiveInt] = None
+    noverlap: PositiveInt | None = None
     """Number of samples to overlap between segments. If None, `noverlap = nperseg // 2`"""
-    nfft: typing.Optional[PositiveInt] = None
+    nfft: PositiveInt | None = None
     """Length of FFT used per segment. If None, `nfft = nperseg`"""
-    detrend: typing.Union[
-        typing.Literal["linear"], typing.Literal["constant"], typing.Literal[False]
-    ] = False
+    detrend: typing.Literal["linear", "constant", False] = False
     """Specifies how to detrend each segment. ["constant", "linear", or False]"""
-    reduce_op: typing.Union[
-        typing.Literal["max"], typing.Literal["median"], typing.Literal["mean"]
-    ] = "max"
+    reduce_op: typing.Literal["max", "median", "mean"] = "max"
     """Operation to use to reduce segment spectra to one result per chunk. ["max", "median", or "mean"]"""
     num_spectra_per_chunk: PositiveInt = 1
     """Number of spectra samples to calculate per chunk of data. Must evenly divide `chunk_size`."""
@@ -109,16 +126,14 @@ class Spectrogram(holoscan.core.Operator):
     num_subchannels: int
     window: str
     nperseg: int
-    noverlap: typing.Optional[int]
-    nfft: typing.Optional[int]
-    detrend: typing.Union[
-        typing.Literal["linear"], typing.Literal["constant"], typing.Literal[False]
-    ]
-    reduce_op: typing.Union[
-        typing.Literal["max"], typing.Literal["median"], typing.Literal["mean"]
-    ]
+    noverlap: int | None
+    nfft: int | None
+    detrend: typing.Literal["linear", "constant", False]
+    reduce_op: typing.Literal["max", "median", "mean"]
     num_spectra_per_chunk: int
     spec_sample_cadence: int
+
+    _graph_lock = threading.Lock()
 
     def __init__(
         self,
@@ -168,7 +183,7 @@ class Spectrogram(holoscan.core.Operator):
         """
         self.chunk_size = chunk_size
         self.num_subchannels = num_subchannels
-        self.window = window
+        self.window_str = window
         self.nperseg = nperseg
         if noverlap is None:
             noverlap = nperseg // 2
@@ -192,7 +207,8 @@ class Spectrogram(holoscan.core.Operator):
         self.num_spectra_per_chunk = num_spectra_per_chunk
         self.spec_sample_cadence = self.chunk_size // self.num_spectra_per_chunk
 
-        # plan will be initialized on first compute(), use null context until then
+        self.compute_counter = 0
+        # plan will be initialized on first start(), use null context until then
         self.cufft_plan = contextlib.nullcontext()
 
         super().__init__(fragment, *args, **kwargs)
@@ -207,13 +223,40 @@ class Spectrogram(holoscan.core.Operator):
         )
 
     def initialize(self):
-        self.logger.debug("Initializing spectrogram operator")
+        self.logger.debug(f"Initializing {self.name} operator")
 
-        # warm up CUDA calculation to force one-time overheads into init
+        # stored capture graph for reusable spectrogram calculation
+        self.spec_graph = None
+        self.graph_mempool = cp.cuda.MemoryPool()
+        self.graph_mempool.set_limit(0)  # unlimited, never return memory
+
+    def start(self):
+        self.logger.debug(f"Starting {self.name} operator")
+        stream_ptr = self.execution_context.allocate_cuda_stream("_internal")
+        stream = cp.cuda.ExternalStream(stream_ptr)
+        self.stream = stream
+
+        with stream:
+            # get device array for window ahead of time so we don't need to do a host
+            # to device transfer for every spectrogram to get the window array
+            self.window = cpss.get_window(self.window_str, self.nperseg)
+
+            # device storage for incoming rf data that we reuse in a computation graph
+            self.rf_chunks = cp.empty(
+                (
+                    self.num_spectra_per_chunk,
+                    self.num_subchannels,
+                    self.chunk_size // self.num_spectra_per_chunk,
+                ),
+                dtype="complex64",
+            )
+
+        # warm up CUDA calculation to force one-time overheads into start
         # so we don't spend an extra long time in the first compute call
         # and delay other operators
-        for _host_spec in self.calc_spectrogram_chunk(
+        for _spec in self.calc_spectrogram_chunk(
             cp.ones((self.chunk_size, self.num_subchannels), dtype="complex64"),
+            stream=stream,
         ):
             pass
 
@@ -223,48 +266,65 @@ class Spectrogram(holoscan.core.Operator):
         op_output: holoscan.core.OutputContext,
         context: holoscan.core.ExecutionContext,
     ):
+        # **IMPORTANT**: CuPy seems to do some cleanup only when a stream is
+        # synchronized, and without it kernel launches will start to take longer
+        # and longer until eventually we end up dropping samples. We don't want to
+        # synchronize after queueing up the GPU computations because we want to return
+        # quickly to clear the input buffer and allow upstream operators to continue.
+        # So, the best place to synchronize is right at the start here, even before the
+        # input is received so that we only wait for prior work on the stream to finish
+        # and not additionally wait on upstream streams to have their work ready.
+        self.compute_counter = (self.compute_counter + 1) % 100
+        if self.compute_counter == 0:
+            self.stream.synchronize()
+
         # We only process one input in this compute because we want the outputs emitted
         # as soon as possible to minimize latency and let downstream operators work.
         rf_arr = op_input.receive("rf_in")
         if rf_arr is None:
             return
         stream_ptr = op_input.receive_cuda_stream("rf_in", allocate=True)
+        stream = cp.cuda.ExternalStream(stream_ptr)
+        input_stream_ptr = op_input.receive_cuda_streams("rf_in")[0]
 
         rf_metadata = rf_arr.metadata
 
         msg = (
-            f"Processing spectrogram for chunk with sample_idx {rf_metadata.sample_idx}"
+            f"Processing {self.name} for chunk with sample_idx {rf_metadata.sample_idx}"
         )
         self.logger.debug(msg)
 
-        with cp.cuda.ExternalStream(stream_ptr):
-            try:
-                rf_data = cp.from_dlpack(rf_arr.data)
-            except Exception:
-                msg = "Failed to convert data to CuPy array, skipping"
-                self.logger.exception(msg)
-                return
-            for spec_count, host_spec in enumerate(
-                self.calc_spectrogram_chunk(rf_data)
-            ):
-                sample_idx = (
-                    rf_metadata.sample_idx + spec_count * self.spec_sample_cadence
-                )
-                spec_metadata = rf_array.RFMetadata(
-                    sample_idx,
-                    rf_metadata.sample_rate_numerator,
-                    rf_metadata.sample_rate_denominator,
-                    rf_metadata.center_freq,
-                )
-                out_message = {
-                    # cast to Holoscan Tensor so it is passed without data copy
-                    # allowing emit before the stream is synced
-                    "spec": holoscan.as_tensor(host_spec),
-                    "metadata": spec_metadata,
-                }
-                op_output.emit(out_message, "spec_out")
+        try:
+            rf_data = cp.from_dlpack(rf_arr.data)
+        except Exception:
+            msg = "Failed to convert data to CuPy array, skipping"
+            self.logger.exception(msg)
+            return
 
-    def calc_spectrogram_chunk(self, rf_data):
+        post_copy_callback = lambda: context.synchronize_streams(
+            [stream.ptr], input_stream_ptr
+        )
+
+        for spec_count, (spec, event) in enumerate(
+            self.calc_spectrogram_chunk(rf_data, stream, post_copy_callback)
+        ):
+            sample_idx = rf_metadata.sample_idx + spec_count * self.spec_sample_cadence
+            spec_metadata = rf_array.RFMetadata(
+                sample_idx,
+                rf_metadata.sample_rate_numerator,
+                rf_metadata.sample_rate_denominator,
+                rf_metadata.center_freq,
+            )
+            out_message = SpecMsg(
+                spec=spec,
+                metadata=spec_metadata,
+                event=event,
+            )
+            op_output.emit(out_message, "spec_out", "PyObject")
+
+    def calc_spectrogram_chunk(self, rf_data, stream=None, post_copy_callback=None):
+        if stream is None:
+            stream = cp.cuda.get_current_stream()
         # get pinned host memory for output so copy can run asynchronously
         spec_pinned = cupyx.empty_pinned(
             (self.num_spectra_per_chunk, self.num_subchannels, self.nfft),
@@ -273,65 +333,111 @@ class Spectrogram(holoscan.core.Operator):
         )
         spec_pinned[...] = np.nan
 
+        if self.logger.isEnabledFor(logging.DEBUG):
+            # if statement to protect expensive eval of pinned_mempool.n_free_blocks()
+            msg = (
+                f"{self.name} allocated pinned memory, "
+                f"{pinned_mempool.n_free_blocks()} free blocks. "
+                "Now building computation graph."
+            )
+            self.logger.debug(msg)
+
         # break rf_data into chunks and transpose so we have shape
         # (num_spectra_per_chunk, num_subchannels, chunk_size // num_spectra_per_chunk)
         # and can take FFT over the last axis
-        spectrum_chunks = rf_data.reshape(
+        rf_chunks = rf_data.reshape(
             (
                 self.num_spectra_per_chunk,
                 self.chunk_size // self.num_spectra_per_chunk,
                 self.num_subchannels,
             )
         ).transpose((0, 2, 1))
-        with self.cufft_plan as plan:
-            _freqs, _sidxs, Zxx = cpss.stft(
-                spectrum_chunks,
-                fs=1,
-                window=self.window,
-                nperseg=self.nperseg,
-                noverlap=self.noverlap,
-                nfft=self.nfft,
-                detrend=self.detrend,
-                return_onesided=False,
-                boundary=None,
-                padded=False,
-                axis=-1,
-                scaling="spectrum",
+
+        # Copy data into pre-allocated memory that we run the computation graph on.
+        # Also, synchronize input stream to operator stream to ensure
+        # that deallocation of rf_arr.data (when it is destroyed at the end of the
+        # compute() call) happens on the input stream as soon as possible *after* we
+        # have what we need to continue the computation asynchronously
+        with stream:
+            cp.copyto(self.rf_chunks, rf_chunks)
+        if post_copy_callback is not None:
+            post_copy_callback()
+
+        # CAUTION: using a computation graph is subtly broken in that it considers
+        # all of the memory allocated from the mempool to be "free" after this returns,
+        # meanining it could be released back to the OS at any time and then using it
+        # will result in a segmentation fault. We can get away with it if the memory
+        # is kept in the mempool and never reused or returned to the OS.
+        if self.spec_graph is None:
+            with (
+                self._graph_lock,
+                cp.cuda.using_allocator(self.graph_mempool.malloc),
+                cp.cuda.Stream(non_blocking=True) as capture_stream,
+            ):
+                # capture GPU operations into a graph, which can be optimized and launched
+                capture_stream.begin_capture()
+                with self.cufft_plan as plan:
+                    _freqs, _sidxs, Zxx = cpss.stft(
+                        self.rf_chunks,
+                        fs=1,
+                        window=self.window,
+                        nperseg=self.nperseg,
+                        noverlap=self.noverlap,
+                        nfft=self.nfft,
+                        detrend=self.detrend,
+                        return_onesided=False,
+                        boundary=None,
+                        padded=False,
+                        axis=-1,
+                        scaling="spectrum",
+                    )
+                    # extract FFT plan for next time if we didn't have one this time
+                    # (plan cache never hits otherwise, and a new plan would always be created)
+                    if plan is None:
+                        plan_cache = cp.fft.config.get_plan_cache()
+                        # most recently used plan is the first in the cache when iterating,
+                        # which is the one we want to save for re-use with this operator
+                        for key, node in plan_cache:
+                            self.cufft_plan = node.plan
+                            break
+                # Zxx shape is (num_spectra_per_chunk, num_subchannels, nfft, ntime)
+                # reduce over time (last) axis, fftshift freq (last after reduction) axis
+                self.out_spec = cp.fft.fftshift(
+                    self.reduce_op(squared_mag_complex64(Zxx), axis=-1), axes=-1
+                )
+                self.spec_graph = capture_stream.end_capture()
+
+        # launch the graph which operates on self.rf_chunks and outputs into spec_pinned
+        self.spec_graph.launch(stream=stream)
+
+        if self.logger.isEnabledFor(logging.DEBUG):
+            msg = (
+                f"Mempool at launch of {self.name} computation graph: "
+                f"{mempool.used_bytes()} used / {mempool.total_bytes()} total bytes"
             )
-            # extract FFT plan for next time if we didn't have one this time
-            # (plan cache never hits otherwise, and a new plan would always be created)
-            if plan is None:
-                plan_cache = cp.fft.config.get_plan_cache()
-                # most recently used plan is the first in the cache when iterating,
-                # which is the one we want to save for re-use with this operator
-                for key, node in plan_cache:
-                    self.cufft_plan = node.plan
-                    break
-        # Zxx shape is (num_spectra_per_chunk, num_subchannels, nfft, ntime)
-        # reduce over time (last) axis, fftshift freq (last after reduction) axis
-        spec = cp.fft.fftshift(
-            self.reduce_op(Zxx.real**2 + Zxx.imag**2, axis=-1), axes=-1
-        )
+            self.logger.debug(msg)
 
         # copy result into (host-pinned) numpy array
-        host_spec = spec.get(out=spec_pinned, blocking=False)
+        host_spec = self.out_spec.get(stream=stream, out=spec_pinned, blocking=False)
+        event = cp.cuda.Event(block=True, disable_timing=True, interprocess=True)
+        stream.record(event)
 
         for spec_count in range(host_spec.shape[0]):
             # output is C-contiguous with shape (num_subchannels, nfft)
-            yield host_spec[spec_count, ...]
+            yield host_spec[spec_count, ...], event
 
 
 @dataclasses.dataclass
 class SpectrogramMQTTParams:
     """Spectrogram MQTT output parameters"""
 
-    spec_sample_cadence: typing.Optional[PositiveInt] = None
+    spec_sample_cadence: PositiveInt | None = None
     """Number of RF samples that go into each spectrum input chunk"""
     input_buffer_capacity: PositiveInt = 10
     """Size of the input buffer, > 1 so upstream operator is not held up"""
     service_name: str = "recorder_fft"
     """Service name to use when publishing over MQTT"""
-    node_id: typing.Optional[str] = None
+    node_id: str | None = None
     """Identifier (e.g. MAC address) for this node when publishing over MQTT"""
     status_topic: str = "{service_name}/status"
     """MQTT topic for publishing status. Can contain format identifiers
@@ -445,7 +551,7 @@ class SpectrogramMQTT(holoscan.core.Operator):
         )
 
     def initialize(self):
-        self.logger.debug("Initializing spectrogram MQTT output operator")
+        self.logger.debug(f"Initializing {self.name} operator")
 
         client_kwargs = {}
         if self.payload_format == "f32buffer":
@@ -461,7 +567,10 @@ class SpectrogramMQTT(holoscan.core.Operator):
             self.mqtt_client.loop_start()
         except Exception:
             self.logger.exception("Failed to connect to MQTT broker")
-        self.mqtt_client.enable_logger(self.logger)
+        if os.environ.get("HOLOSCAN_LOG_LEVEL", "WARN").upper() == "TRACE":
+            # MQTT logging is a lot, so only enable it if TRACE level
+            # (not supported by Python, translated to DEBUG) is wanted
+            self.mqtt_client.enable_logger(self.logger)
         self.mqtt_client.publish(
             self.status_topic, payload='{"state": "online"}', qos=0, retain=True
         )
@@ -473,27 +582,19 @@ class SpectrogramMQTT(holoscan.core.Operator):
         context: holoscan.core.ExecutionContext,
     ):
         spec_message = op_input.receive("spec_in")
-        # get stream and synchronize to ensure data is in host memory before proceeding
+        # synchronize to ensure data is in host memory before proceeding
         # (do this here because input buffer is large and therefore waiting on this
         #  operator does not slow down upstream operators)
-        stream_ptr = op_input.receive_cuda_stream("spec_in", allocate=True)
-        stream = cp.cuda.ExternalStream(stream_ptr)
-        stream.synchronize()
-        while spec_message is not None:
-            self.compute_one(spec_message)
-            # Try to receive again to either get another message or exit the while loop.
-            # If there were other messages in the queue, then we've already synced with
-            # the stream after they were put there so we might as well process them now.
-            spec_message = op_input.receive("spec_in")
+        spec_ready_event = spec_message.event
+        spec_ready_event.synchronize()
 
-    def compute_one(self, spec_message):
         # spec_arr is C-contiguous with shape (num_subchannels, nfft)
         try:
-            spec_arr = np.from_dlpack(spec_message["spec"])
+            spec_arr = np.from_dlpack(spec_message.spec)
         except Exception:
             self.logger.exception("Failed to convert data to numpy array, skipping")
             return
-        rf_metadata = spec_message["metadata"]
+        rf_metadata = spec_message.metadata
 
         payload, properties = self.make_payload(spec_arr, rf_metadata)
         try:
@@ -582,11 +683,11 @@ class SpectrogramMQTT(holoscan.core.Operator):
 class SpectrogramOutputParams:
     """Spectrogram output parameters"""
 
-    nfft: typing.Optional[PositiveInt] = None
+    nfft: PositiveInt | None = None
     """Number of frequency samples in the spectrogram"""
-    spec_sample_cadence: typing.Optional[PositiveInt] = None
+    spec_sample_cadence: PositiveInt | None = None
     """Number of RF samples that go into each spectrum input chunk"""
-    num_subchannels: typing.Optional[PositiveInt] = None
+    num_subchannels: PositiveInt | None = None
     """Number of subchannels contained in the spectrogram data"""
     output_path: os.PathLike = pathlib.Path(".")
     """Parent directory for writing output files"""
@@ -707,7 +808,7 @@ class SpectrogramOutput(holoscan.core.Operator):
         )
 
     def initialize(self):
-        self.logger.debug("Initializing spectrogram output operator")
+        self.logger.debug(f"Initializing {self.name} operator")
         self.data_path.mkdir(parents=True, exist_ok=True)
         self.last_written_sample_idx = -1
         self.latest_chunk_idx = 0
@@ -756,7 +857,8 @@ class SpectrogramOutput(holoscan.core.Operator):
             dpi=self.dpi,
         )
         fig.get_layout_engine().set(w_pad=1 / 72, h_pad=1 / 72)
-        self.norm = mpl.colors.Normalize(vmin=self.snr_db_min - self.snr_db_max, vmax=0)
+        # don't set any vmin or vmax yet so it doesn't clip when setting later
+        self.norm = mpl.colors.Normalize()
         xlocator = mpl.dates.AutoDateLocator(minticks=3, maxticks=7)
         xformatter = mpl.dates.ConciseDateFormatter(xlocator)
         axs_1d = []
@@ -806,27 +908,19 @@ class SpectrogramOutput(holoscan.core.Operator):
         context: holoscan.core.ExecutionContext,
     ):
         spec_message = op_input.receive("spec_in")
-        # get stream and synchronize to ensure data is in host memory before proceeding
+        # synchronize to ensure data is in host memory before proceeding
         # (do this here because input buffer is large and therefore waiting on this
         #  operator does not slow down upstream operators)
-        stream_ptr = op_input.receive_cuda_stream("spec_in", allocate=True)
-        stream = cp.cuda.ExternalStream(stream_ptr)
-        stream.synchronize()
-        while spec_message is not None:
-            self.compute_one(spec_message)
-            # Try to receive again to either get another message or exit the while loop.
-            # If there were other messages in the queue, then we've already synced with
-            # the stream after they were put there so we might as well process them now.
-            spec_message = op_input.receive("spec_in")
+        spec_ready_event = spec_message.event
+        spec_ready_event.synchronize()
 
-    def compute_one(self, spec_message):
         # spec_arr is C-contiguous with shape (num_subchannels, nfft)
         try:
-            spec_arr = np.from_dlpack(spec_message["spec"])
+            spec_arr = np.from_dlpack(spec_message.spec)
         except Exception:
             self.logger.exception("Failed to convert data to numpy array, skipping")
             return
-        rf_metadata = spec_message["metadata"]
+        rf_metadata = spec_message.metadata
 
         # reset stored data with new metadata if uninitialized
         # (first time or finished previous write)
@@ -906,7 +1000,7 @@ class SpectrogramOutput(holoscan.core.Operator):
         self.logger.info(f"Outputting spectrogram for time {spec_start_dt}")
 
         num_retries = 3
-        for retry in range(0, num_retries):
+        for retry in range(num_retries):
             try:
                 self.dmd_writer.write(
                     [int(output_sample_idx[0])],
@@ -925,7 +1019,7 @@ class SpectrogramOutput(holoscan.core.Operator):
                         }
                     ],
                 )
-            except IOError:
+            except OSError:
                 if retry == (num_retries - 1):
                     self.logger.warning(traceback.format_exc())
             else:
@@ -939,8 +1033,14 @@ class SpectrogramOutput(holoscan.core.Operator):
         ref_pwr_dbfs = 10 * np.log10(reference_pwr)
         # use rounded ref power to set scale so it is consistent for small noise changes
         ref_pwr_dbfs_rnd = np.round(ref_pwr_dbfs)
-        self.norm.vmax = np.minimum(ref_pwr_dbfs_rnd + self.snr_db_max, 5 * np.log10(2))
-        self.norm.vmin = ref_pwr_dbfs_rnd + self.snr_db_min
+        vmin = ref_pwr_dbfs_rnd + self.snr_db_min
+        vmax = np.minimum(ref_pwr_dbfs_rnd + self.snr_db_max, 5 * np.log10(2))
+        # set vmin twice because it will be clipped to old vmax value if vmin > vmax_old
+        # on the first attempt so we need a second attempt after vmax is set
+        # vice versa would be true as well if vmax < vmin_old and setting vmax first
+        self.norm.vmin = vmin
+        self.norm.vmax = vmax
+        self.norm.vmin = vmin
         spec_power_dbfs = 10 * np.log10(output_spec_data)
         # delta from time_idx b/c it will have a [1], while output_time_idx might not
         delta_t = time_idx[1] - time_idx[0]
@@ -958,7 +1058,7 @@ class SpectrogramOutput(holoscan.core.Operator):
                 data=spec_power_dbfs[:, sch, :].T,
                 extent=extent,
             )
-        self.ref_lvl_text.set_text(f"Noise: {float(ref_pwr_dbfs):.2f} [dbFS]")
+        self.ref_lvl_text.set_text(f"Noise: {float(ref_pwr_dbfs):.2f} [dBFS]")
         self.suptitle.set_text(
             f"{self.data_path.parent.name}/{self.data_path.name} @ {freqstr}"
         )
@@ -974,6 +1074,10 @@ class SpectrogramOutput(holoscan.core.Operator):
 
         # track that we just wrote a sample
         self.last_written_sample_idx = sample_idx
+
+        # free pinned memory now since writing output can bloat input buffer and this
+        # seems to help keep long-term memory use (pinned memory never freed otherwise)
+        pinned_mempool.free_all_blocks()
 
     def stop(self):
         self.write_output()

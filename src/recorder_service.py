@@ -1,5 +1,6 @@
 import dataclasses
 import functools
+import itertools
 import logging
 import operator
 import os
@@ -9,7 +10,7 @@ import signal
 import socket
 import time
 import traceback
-from typing import Any, Optional
+from typing import Any
 
 import aiomqtt
 import anyio
@@ -49,7 +50,7 @@ class RecorderService:
     command_topic: str = "{service.name}/command"
     config_path: os.PathLike = "config"
     name: str = "recorder"
-    node_id: Optional[str] = None
+    node_id: str | None = None
     output_path: os.PathLike = "/data/ringbuffer"
     ram_ringbuffer_path: os.PathLike = "."
     response_topic: str = "{service.name}/response"
@@ -64,7 +65,7 @@ class RecorderService:
         init=False,
     )
     recording_enabled: bool = dataclasses.field(default=False, init=False)
-    recording_scope: Optional[anyio.CancelScope] = dataclasses.field(
+    recording_scope: anyio.CancelScope | None = dataclasses.field(
         default=None, init=False
     )
 
@@ -97,12 +98,12 @@ def load_configs(service):
 async def send_announce(client, service):
     payload = {
         "title": "Recorder",
-        "description": f"Record data to {str(service.output_path)}",
+        "description": f"Record data to {service.output_path!s}",
         "author": "Ryan Volz <rvolz@mit.edu>",
         "url": "ghcr.io/ryanvolz/holoscan_recorder/mep",
         "source": "https://github.com/ryanvolz/holoscan_recorder",
         "output": {
-            "rf_data": {"type": "disk", "value": f"{str(service.output_path)}"},
+            "rf_data": {"type": "disk", "value": f"{service.output_path!s}"},
             "status": {
                 "type": "mqtt",
                 "value": f"{service.status_topic}",
@@ -153,7 +154,7 @@ async def send_announce(client, service):
 
 async def send_status(client, service):
     payload = {
-        "output_path": f"{str(service.output_path)}",
+        "output_path": f"{service.output_path!s}",
         "state": "recording" if service.recording_enabled else "waiting",
         "timestamp": time.time(),
     }
@@ -254,6 +255,7 @@ async def run_recorder(client, service):
     ]
     with anyio.CancelScope() as scope:
         service.recording_scope = scope
+        clear_ringbuffers(service)
         await send_status(client, service)
         async with await anyio.open_process(
             command, stdout=None, stderr=None
@@ -264,20 +266,25 @@ async def run_recorder(client, service):
                 if process.returncode is None:
                     # process is still running, stop it gracefully
                     process.send_signal(signal.SIGINT)
-                # clean up ram ringbuffer directory
-                for item in service.ram_ringbuffer_path.rglob("*"):
-                    try:
-                        if item.is_dir():
-                            shutil.rmtree(item, ignore_errors=True)
-                        else:
-                            item.unlink(missing_ok=True)
-                    except OSError:
-                        pass
+                clear_ringbuffers(service)
                 service.recording_enabled = False
                 service.recording_scope = None
                 with anyio.CancelScope(shield=True):
                     await process.wait()
                     await send_status(client, service)
+
+
+def clear_ringbuffers(sevice):
+    for item in itertools.chain(
+        service.ram_ringbuffer_path.rglob("*"), service.tmp_ringbuffer_path.rglob("*")
+    ):
+        try:
+            if item.is_dir():
+                shutil.rmtree(item, ignore_errors=True)
+            else:
+                item.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def disable_recording(service):
